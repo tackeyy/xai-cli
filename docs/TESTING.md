@@ -15,17 +15,16 @@ xai-cli uses [Vitest](https://vitest.dev/) as its testing framework. All code co
 
 ### Directory Layout
 
-```
+```text
 src/
   __tests__/
-    api.test.ts              # Zoom API integration tests
-    auth.test.ts             # OAuth token management tests
-    cli-output.test.ts       # CLI output formatting tests
-    cli-validation.test.ts   # CLI input validation tests
-    config.test.ts           # Configuration loading tests
-    error-handling.test.ts   # Error handling flow tests
-    errors.test.ts           # Error class tests
-    index.test.ts            # Core logic tests (formatDate, buildTopic)
+    helpers/
+      mock-fetch.ts            # Shared fetch mock helpers
+  lib/__tests__/
+    client.test.ts             # XaiClient API wrapper tests
+    retry.test.ts              # Retry logic and XaiApiError tests
+  cli/__tests__/
+    commands.test.ts           # CLI command integration tests
 ```
 
 ### Naming Conventions
@@ -40,57 +39,55 @@ src/
 
 Test individual functions in isolation.
 
-**Example** (from `index.test.ts`):
+**Example** (from `client.test.ts`):
+
 ```typescript
-describe("formatDate", () => {
-  it("should format date with yyyy/MM/dd HH:mm pattern in Asia/Tokyo timezone", async () => {
-    const date = new Date("2026-02-10T10:00:00Z");
-    const format = "yyyy/MM/dd HH:mm";
-    const timezone = "Asia/Tokyo";
+describe("XaiClient - search", () => {
+  it("should send correct request for keyword search", async () => {
+    const mockFetch = vi.fn().mockResolvedValue(mockXaiResponse("results"));
+    globalThis.fetch = mockFetch;
 
-    const { formatDate } = await import("../index.js");
-    const result = formatDate(date, format, timezone);
+    const client = new XaiClient({ apiKey: "test-key" });
+    const result = await client.search("AI");
 
-    expect(result).toBe("2026/02/10 19:00");
+    expect(result.text).toBe("results");
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    expect(body.tools[0].type).toBe("x_search");
   });
 });
 ```
 
-### 2. Validation Tests
+### 2. Retry Tests
 
-Test input validation logic for CLI commands.
+Test retry logic with exponential backoff.
 
-**Example** (from `cli-validation.test.ts`):
+**Example** (from `retry.test.ts`):
+
 ```typescript
-describe("CLI Validation - create command", () => {
-  it("should reject duration exceeding 1440 minutes", () => {
-    const duration = 1441;
-
-    expect(duration > 1440).toBe(true);
+describe("withRetry", () => {
+  it("should retry on 429 and eventually succeed", async () => {
+    const fn = vi
+      .fn()
+      .mockRejectedValueOnce(new XaiApiError(429, "Rate limited"))
+      .mockResolvedValue("ok");
+    const result = await withRetry(fn, { baseDelayMs: 1, maxDelayMs: 1 });
+    expect(result).toBe("ok");
+    expect(fn).toHaveBeenCalledTimes(2);
   });
 });
 ```
 
-### 3. Output Tests
+### 3. CLI Tests
 
-Test CLI output formatting (text and JSON).
+Test CLI commands with injected mock client.
 
-**Example** (from `cli-output.test.ts`):
+**Example** (from `commands.test.ts`):
+
 ```typescript
-describe("CLI Output - create command", () => {
-  let stdoutSpy: ReturnType<typeof vi.spyOn>;
-
-  beforeEach(() => {
-    stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
-  });
-
-  afterEach(() => {
-    stdoutSpy.mockRestore();
-  });
-
-  it("should output text format for successful meeting creation", () => {
-    // ... test implementation
-    expect(stdoutSpy).toHaveBeenCalledWith("Meeting created!\n");
+describe("CLI commands - search", () => {
+  it("should call client.search with query", async () => {
+    const client = await run(["search", "AI"]);
+    expect(client.search).toHaveBeenCalledWith("AI", expect.any(Object));
   });
 });
 ```
@@ -99,14 +96,18 @@ describe("CLI Output - create command", () => {
 
 Test error scenarios and exit codes.
 
-**Example** (from `error-handling.test.ts`):
-```typescript
-describe("Error Handling", () => {
-  it("should handle ValidationError with exit code 2", () => {
-    const error = new ValidationError("--start must be valid");
+**Example**:
 
-    // Verify error type and exit code
-    expect(error instanceof ValidationError).toBe(true);
+```typescript
+describe("error handling", () => {
+  it("should print error and exit 1 on failure", async () => {
+    const client = createMockClient();
+    (client.search as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error("API failed"),
+    );
+    await run(["search", "test"], client);
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("API failed"));
+    expect(exitSpy).toHaveBeenCalledWith(1);
   });
 });
 ```
@@ -128,76 +129,63 @@ it("should do something", () => {
 });
 ```
 
-### One Assertion Per Test (When Possible)
-
-❌ Bad:
-```typescript
-it("should validate multiple things", () => {
-  expect(result.id).toBe(123);
-  expect(result.name).toBe("test");
-  expect(result.valid).toBe(true);
-});
-```
-
-✅ Good:
-```typescript
-it("should return correct ID", () => {
-  expect(result.id).toBe(123);
-});
-
-it("should return correct name", () => {
-  expect(result.name).toBe("test");
-});
-
-it("should mark result as valid", () => {
-  expect(result.valid).toBe(true);
-});
-```
-
 ### Use Descriptive Test Names
 
-❌ Bad:
+Bad:
+
 ```typescript
 it("works", () => {});
 it("test 1", () => {});
 ```
 
-✅ Good:
+Good:
+
 ```typescript
-it("should reject invalid ISO 8601 datetime format", () => {});
-it("should cache token and reuse on second call", () => {});
+it("should strip @ prefix from handle", () => {});
+it("should throw XaiApiError on 401 response", () => {});
 ```
 
 ### Mock External Dependencies
 
 Always mock:
+
 - `fetch` (API calls)
 - `process.env` (environment variables)
-- `process.stdout.write` (output)
-- `process.stderr.write` (errors)
+- `console.log` / `console.error` (output)
 - `process.exit` (exit codes)
 
 **Example**:
+
 ```typescript
 beforeEach(() => {
-  vi.resetModules();
+  originalFetch = globalThis.fetch;
   globalThis.fetch = vi.fn();
 });
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
+  vi.restoreAllMocks();
+});
+```
+
+### Testing Environment Variables
+
+```typescript
+it("should throw if XAI_API_KEY is not set", () => {
+  delete process.env.XAI_API_KEY;
+  // ... test that CLI exits with appropriate error
 });
 ```
 
 ### Test Edge Cases
 
 Always test:
-- ✅ Valid input (happy path)
-- ✅ Invalid input (error cases)
-- ✅ Boundary values (0, max, min)
-- ✅ Empty values (null, undefined, "")
-- ✅ Special characters
-- ✅ Extreme inputs (very long strings, large numbers)
+
+- Valid input (happy path)
+- Invalid input (error cases)
+- Boundary values
+- Empty values (null, undefined, "")
+- Special characters (URLs, @handles)
 
 ## Running Tests
 
@@ -208,13 +196,13 @@ Always test:
 npm test
 
 # Run in watch mode (development)
-npm test -- --watch
+npm run test:watch
 
 # Run specific file
-npm test src/__tests__/api.test.ts
+npm test src/lib/__tests__/client.test.ts
 
 # Run tests matching pattern
-npm test -- --grep "validation"
+npm test -- --grep "search"
 ```
 
 ### Debugging Tests
@@ -222,9 +210,6 @@ npm test -- --grep "validation"
 ```bash
 # Run with verbose output
 npm test -- --reporter=verbose
-
-# Run single test file with Node debugger
-node --inspect-brk node_modules/.bin/vitest run src/__tests__/api.test.ts
 ```
 
 ## Test Coverage Requirements
@@ -236,65 +221,18 @@ node --inspect-brk node_modules/.bin/vitest run src/__tests__/api.test.ts
 | **Refactoring** | Maintain existing coverage |
 | **Overall Project** | Target: 95%+ |
 
-## Common Testing Patterns
-
-### Testing API Functions
-
-```typescript
-import { vi, beforeEach, afterEach } from "vitest";
-
-const mockResponse = {
-  ok: true,
-  status: 200,
-  json: () => Promise.resolve({ id: 123 }),
-} as Response;
-
-beforeEach(() => {
-  vi.resetModules();
-  globalThis.fetch = vi.fn().mockResolvedValue(mockResponse);
-});
-
-afterEach(() => {
-  globalThis.fetch = originalFetch;
-});
-```
-
-### Testing Environment Variables
-
-```typescript
-beforeEach(() => {
-  vi.resetModules();
-  process.env = { ...originalEnv };
-  process.env["ZOOM_ACCOUNT_ID"] = "test-account";
-});
-
-afterEach(() => {
-  process.env = originalEnv;
-});
-```
-
-### Testing Error Messages
-
-```typescript
-it("should throw ValidationError with specific message", async () => {
-  await expect(someFunction()).rejects.toThrow(
-    "--duration must not exceed 1440 minutes"
-  );
-});
-```
-
 ## Best Practices
 
-### DO ✅
+### DO
 
 - Write tests before or alongside code
-- Use `vi.resetModules()` to ensure test isolation
+- Use `vi.restoreAllMocks()` to ensure test isolation
 - Mock external dependencies
 - Test both success and failure paths
 - Use meaningful test descriptions
 - Keep tests simple and focused
 
-### DON'T ❌
+### DON'T
 
 - Skip writing tests ("I'll add them later")
 - Test implementation details (test behavior, not internals)
@@ -303,36 +241,15 @@ it("should throw ValidationError with specific message", async () => {
 - Leave commented-out test code
 - Write flaky tests (tests that sometimes fail)
 
-## Troubleshooting
-
-### "Module not found" errors
-
-```bash
-# Ensure you're using dynamic imports with .js extension
-const { myFunction } = await import("../myModule.js");
-```
-
-### "Tests pass locally but fail in CI"
-
-- Check for timezone differences
-- Ensure all mocks are properly restored
-- Use `vi.resetModules()` between tests
-
-### "Tests are slow"
-
-- Avoid unnecessary async operations
-- Mock heavy dependencies
-- Use `vi.useFakeTimers()` for time-dependent tests
-
 ## Resources
 
 - [Vitest Documentation](https://vitest.dev/)
 - [Vitest API Reference](https://vitest.dev/api/)
-- [Testing Best Practices](https://opensource.guide/best-practices/)
 
 ## Questions?
 
 If you have questions about testing:
+
 1. Check existing test files for examples
 2. Ask in [GitHub Discussions](https://github.com/tackeyy/xai-cli/discussions)
 3. Open an issue with the `question` label

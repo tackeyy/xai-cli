@@ -42,8 +42,8 @@ an individual is officially representing the community in public spaces.
 ## Enforcement
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
-reported to the community leaders responsible for enforcement via X (Twitter):
-[@3chhe](https://x.com/3chhe).
+reported to the community leaders responsible for enforcement via
+[GitHub Issues](https://github.com/tackeyy/xai-cli/issues).
 
 All complaints will be reviewed and investigated promptly and fairly.
 

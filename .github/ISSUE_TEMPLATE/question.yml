@@ -1,5 +1,5 @@
-name: ❓ Question
-description: Ask a question about using Zoomy
+name: Question
+description: Ask a question about using xai-cli
 labels: ["question"]
 body:
   - type: markdown
@@ -11,10 +11,10 @@ body:
     id: question
     attributes:
       label: Your question
-      description: What would you like to know about Zoomy?
+      description: What would you like to know about xai-cli?
       placeholder: |
-        How do I configure multiple Zoom accounts?
-        What timezone formats are supported?
+        How do I search for posts from a specific user?
+        What output formats are supported?
     validations:
       required: true
 
