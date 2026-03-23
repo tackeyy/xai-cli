@@ -20,8 +20,8 @@ export interface XaiRequest {
 }
 
 export interface XaiResponseOutput {
-  type: "message" | "tool_use" | "tool_result";
-  content?: Array<{ type: "text"; text: string }>;
+  type: string;
+  content?: Array<{ type: string; text: string }>;
 }
 
 export interface XaiResponse {

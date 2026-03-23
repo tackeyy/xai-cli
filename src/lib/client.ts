@@ -60,9 +60,9 @@ export class XaiClient {
 
   private extractText(response: XaiResponse): string {
     return response.output
-      .filter((o) => o.type === "message" && o.content)
+      .filter((o) => o.content && Array.isArray(o.content))
       .flatMap((o) => o.content!)
-      .filter((c) => c.type === "text")
+      .filter((c) => c.type === "text" || c.type === "output_text")
       .map((c) => c.text)
       .join("");
   }

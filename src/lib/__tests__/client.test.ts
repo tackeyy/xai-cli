@@ -240,6 +240,41 @@ describe("XaiClient", () => {
       const result = await client.search("test");
       expect(result.text).toBe("Part 1. Part 2.");
     });
+
+    it("should parse output_text content type from xAI Responses API", async () => {
+      // Real xAI API returns custom_tool_call + output_text (not message + text)
+      const body = {
+        output: [
+          {
+            type: "custom_tool_call",
+            call_id: "xs_call_123",
+            name: "x_keyword_search",
+            input: '{"query":"test"}',
+            status: "completed",
+          },
+          {
+            content: [
+              {
+                type: "output_text",
+                text: "Search results from xAI API",
+                annotations: [],
+              },
+            ],
+          },
+        ],
+      };
+      const mockFetch = vi.fn().mockResolvedValue(
+        new Response(JSON.stringify(body), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+      globalThis.fetch = mockFetch;
+
+      const client = new XaiClient({ apiKey: "test-key" });
+      const result = await client.search("test");
+      expect(result.text).toBe("Search results from xAI API");
+    });
   });
 
   describe("custom options", () => {
