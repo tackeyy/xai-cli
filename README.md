@@ -14,8 +14,19 @@ npm link
 
 ## 環境変数
 
+### xAI API（検索コマンド用）
+
 ```bash
-export XAI_API_KEY="your-api-key"
+export XAI_API_KEY="your-xai-api-key"
+```
+
+### X API OAuth 1.0a（reply コマンド用）
+
+```bash
+export X_API_KEY="your-x-api-key"
+export X_API_SECRET="your-x-api-secret"
+export X_ACCESS_TOKEN="your-x-access-token"
+export X_ACCESS_TOKEN_SECRET="your-x-access-token-secret"
 ```
 
 ## コマンド
@@ -53,6 +64,21 @@ xai tweet "https://x.com/elonmusk/status/123456789"
 xai ask "AIスタートアップのトレンドを教えてください"
 xai ask "query" --allow user1,user2 --from 2026-01-01
 ```
+
+### ツイートにリプライ
+
+```bash
+# リプライを投稿
+xai reply 1234567890123456789 "素晴らしい記事ですね！"
+
+# dry-run（実際には投稿せずに内容を確認）
+xai reply --dry-run 1234567890123456789 "素晴らしい記事ですね！"
+
+# JSON形式で結果を出力
+xai --json reply 1234567890123456789 "素晴らしい記事ですね！"
+```
+
+> **注意**: `reply` コマンドには X API OAuth 1.0a 認証が必要です。`X_API_KEY`, `X_API_SECRET`, `X_ACCESS_TOKEN`, `X_ACCESS_TOKEN_SECRET` を設定してください。
 
 ### 出力フォーマット
 
