@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { Command } from "commander";
 import { XaiClient } from "../lib/client.js";
+import { TwitterClient } from "../lib/twitter-client.js";
 
 function createClientFromEnv(): XaiClient {
   const apiKey = process.env.XAI_API_KEY;
@@ -11,11 +12,28 @@ function createClientFromEnv(): XaiClient {
   return new XaiClient({ apiKey });
 }
 
+function createTwitterClientFromEnv(): TwitterClient {
+  const apiKey = process.env.X_API_KEY;
+  const apiSecret = process.env.X_API_SECRET;
+  const accessToken = process.env.X_ACCESS_TOKEN;
+  const accessTokenSecret = process.env.X_ACCESS_TOKEN_SECRET;
+
+  if (!apiKey || !apiSecret || !accessToken || !accessTokenSecret) {
+    console.error(
+      "Error: X API credentials not found.\n" +
+      "Please set X_API_KEY, X_API_SECRET, X_ACCESS_TOKEN, X_ACCESS_TOKEN_SECRET in ~/.secrets",
+    );
+    process.exit(1);
+  }
+
+  return new TwitterClient({ apiKey, apiSecret, accessToken, accessTokenSecret });
+}
+
 function jsonOutput(data: unknown): void {
   console.log(JSON.stringify(data, null, 2));
 }
 
-export function createProgram(injectedClient?: XaiClient): Command {
+export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?: TwitterClient): Command {
   const program = new Command();
 
   program
@@ -34,6 +52,10 @@ export function createProgram(injectedClient?: XaiClient): Command {
 
   function getClient(): XaiClient {
     return injectedClient ?? createClientFromEnv();
+  }
+
+  function getTwitterClient(): TwitterClient {
+    return injectedTwitterClient ?? createTwitterClientFromEnv();
   }
 
   // --- auth ---
@@ -159,6 +181,34 @@ export function createProgram(injectedClient?: XaiClient): Command {
           jsonOutput(result);
         } else {
           console.log(result.text);
+        }
+      } catch (err: any) {
+        console.error(`Error: ${err.message}`);
+        process.exit(1);
+      }
+    });
+
+  // --- reply ---
+  program
+    .command("reply <tweetId> <text>")
+    .description("Reply to a tweet by ID")
+    .option("--dry-run", "Show what would be posted without actually posting")
+    .action(async (tweetId: string, text: string, opts: { dryRun?: boolean }) => {
+      try {
+        if (opts.dryRun) {
+          console.log(`[dry-run] Would reply to tweet ${tweetId}:`);
+          console.log(`[dry-run] text: ${text}`);
+          return;
+        }
+
+        const tc = getTwitterClient();
+        const mode = getOutputMode();
+        const result = await tc.replyTweet(tweetId, text);
+
+        if (mode === "json") {
+          jsonOutput(result);
+        } else {
+          console.log(`Reply posted (id: ${result.id}): ${result.text}`);
         }
       } catch (err: any) {
         console.error(`Error: ${err.message}`);

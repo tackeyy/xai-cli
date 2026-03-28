@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createProgram } from "../index.js";
 import type { XaiClient } from "../../lib/client.js";
+import type { TwitterClient } from "../../lib/twitter-client.js";
 
 function createMockClient(): XaiClient {
   return {
@@ -10,6 +11,12 @@ function createMockClient(): XaiClient {
     ask: vi.fn().mockResolvedValue({ text: "answer" }),
     authTest: vi.fn().mockResolvedValue({ ok: true, model: "grok-4-1-fast" }),
   } as unknown as XaiClient;
+}
+
+function createMockTwitterClient(): TwitterClient {
+  return {
+    replyTweet: vi.fn().mockResolvedValue({ id: "987654321", text: "テスト返信" }),
+  } as unknown as TwitterClient;
 }
 
 describe("CLI commands", () => {
@@ -27,12 +34,13 @@ describe("CLI commands", () => {
     vi.restoreAllMocks();
   });
 
-  async function run(args: string[], client?: XaiClient) {
-    const mockClient = client ?? createMockClient();
-    const program = createProgram(mockClient);
+  async function run(args: string[], client?: XaiClient, twitterClient?: TwitterClient) {
+    const mockXaiClient = client ?? createMockClient();
+    const mockTwitterClient = twitterClient ?? createMockTwitterClient();
+    const program = createProgram(mockXaiClient, mockTwitterClient);
     program.exitOverride();
     await program.parseAsync(["node", "xai", ...args]);
-    return mockClient;
+    return { xaiClient: mockXaiClient, twitterClient: mockTwitterClient };
   }
 
   describe("auth test", () => {
@@ -52,12 +60,12 @@ describe("CLI commands", () => {
 
   describe("search", () => {
     it("should call client.search with query", async () => {
-      const client = await run(["search", "AI"]);
-      expect(client.search).toHaveBeenCalledWith("AI", expect.any(Object));
+      const { xaiClient } = await run(["search", "AI"]);
+      expect(xaiClient.search).toHaveBeenCalledWith("AI", expect.any(Object));
     });
 
     it("should pass date options", async () => {
-      const client = await run([
+      const { xaiClient } = await run([
         "search",
         "AI",
         "--from",
@@ -65,7 +73,7 @@ describe("CLI commands", () => {
         "--to",
         "2026-03-22",
       ]);
-      expect(client.search).toHaveBeenCalledWith(
+      expect(xaiClient.search).toHaveBeenCalledWith(
         "AI",
         expect.objectContaining({
           fromDate: "2026-03-01",
@@ -75,8 +83,8 @@ describe("CLI commands", () => {
     });
 
     it("should pass exclude option", async () => {
-      const client = await run(["search", "AI", "--exclude", "spam1,spam2"]);
-      expect(client.search).toHaveBeenCalledWith(
+      const { xaiClient } = await run(["search", "AI", "--exclude", "spam1,spam2"]);
+      expect(xaiClient.search).toHaveBeenCalledWith(
         "AI",
         expect.objectContaining({
           excludeHandles: ["spam1", "spam2"],
@@ -104,13 +112,13 @@ describe("CLI commands", () => {
 
   describe("user", () => {
     it("should call client.getUser with handle", async () => {
-      const client = await run(["user", "elonmusk"]);
-      expect(client.getUser).toHaveBeenCalledWith("elonmusk", expect.any(Object));
+      const { xaiClient } = await run(["user", "elonmusk"]);
+      expect(xaiClient.getUser).toHaveBeenCalledWith("elonmusk", expect.any(Object));
     });
 
     it("should pass date options", async () => {
-      const client = await run(["user", "elonmusk", "--from", "2026-03-01"]);
-      expect(client.getUser).toHaveBeenCalledWith(
+      const { xaiClient } = await run(["user", "elonmusk", "--from", "2026-03-01"]);
+      expect(xaiClient.getUser).toHaveBeenCalledWith(
         "elonmusk",
         expect.objectContaining({ fromDate: "2026-03-01" }),
       );
@@ -120,19 +128,19 @@ describe("CLI commands", () => {
   describe("tweet", () => {
     it("should call client.getTweet with URL", async () => {
       const url = "https://x.com/elonmusk/status/123";
-      const client = await run(["tweet", url]);
-      expect(client.getTweet).toHaveBeenCalledWith(url);
+      const { xaiClient } = await run(["tweet", url]);
+      expect(xaiClient.getTweet).toHaveBeenCalledWith(url);
     });
   });
 
   describe("ask", () => {
     it("should call client.ask with prompt", async () => {
-      const client = await run(["ask", "What is trending?"]);
-      expect(client.ask).toHaveBeenCalledWith("What is trending?", expect.any(Object));
+      const { xaiClient } = await run(["ask", "What is trending?"]);
+      expect(xaiClient.ask).toHaveBeenCalledWith("What is trending?", expect.any(Object));
     });
 
     it("should pass allow and exclude options", async () => {
-      const client = await run([
+      const { xaiClient } = await run([
         "ask",
         "query",
         "--allow",
@@ -140,13 +148,57 @@ describe("CLI commands", () => {
         "--from",
         "2026-01-01",
       ]);
-      expect(client.ask).toHaveBeenCalledWith(
+      expect(xaiClient.ask).toHaveBeenCalledWith(
         "query",
         expect.objectContaining({
           allowed_x_handles: ["user1", "user2"],
           from_date: "2026-01-01",
         }),
       );
+    });
+  });
+
+  describe("reply", () => {
+    it("should call twitterClient.replyTweet with tweetId and text", async () => {
+      const { twitterClient } = await run(["reply", "123456789", "テスト返信"]);
+      expect(twitterClient.replyTweet).toHaveBeenCalledWith("123456789", "テスト返信");
+    });
+
+    it("should output reply result in human mode", async () => {
+      await run(["reply", "123456789", "テスト返信"]);
+      expect(logSpy).toHaveBeenCalledWith(
+        expect.stringContaining("987654321"),
+      );
+    });
+
+    it("should output JSON in json mode", async () => {
+      await run(["--json", "reply", "123456789", "テスト返信"]);
+      const output = logSpy.mock.calls[0][0];
+      const parsed = JSON.parse(output);
+      expect(parsed.id).toBe("987654321");
+      expect(parsed.text).toBe("テスト返信");
+    });
+
+    it("should NOT call replyTweet in dry-run mode", async () => {
+      const { twitterClient } = await run(["reply", "--dry-run", "123456789", "テスト返信"]);
+      expect(twitterClient.replyTweet).not.toHaveBeenCalled();
+    });
+
+    it("should output dry-run info when --dry-run is set", async () => {
+      await run(["reply", "--dry-run", "123456789", "テスト返信"]);
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("[dry-run]"));
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("123456789"));
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("テスト返信"));
+    });
+
+    it("should print error and exit 1 on replyTweet failure", async () => {
+      const tc = createMockTwitterClient();
+      (tc.replyTweet as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new Error("X API error 403: Forbidden"),
+      );
+      await run(["reply", "123456789", "テスト"], undefined, tc);
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("X API error 403"));
+      expect(exitSpy).toHaveBeenCalledWith(1);
     });
   });
 
