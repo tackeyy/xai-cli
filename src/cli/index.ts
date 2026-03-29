@@ -2,6 +2,7 @@
 import { Command } from "commander";
 import { XaiClient } from "../lib/client.js";
 import { TwitterClient } from "../lib/twitter-client.js";
+import { embedCommand } from "./embed.js";
 
 function createClientFromEnv(): XaiClient {
   const apiKey = process.env.XAI_API_KEY;
@@ -210,6 +211,22 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
         } else {
           console.log(`Reply posted (id: ${result.id}): ${result.text}`);
         }
+      } catch (err: any) {
+        console.error(`Error: ${err.message}`);
+        process.exit(1);
+      }
+    });
+
+  // --- embed ---
+  program
+    .command("embed <url-or-id>")
+    .description("X(Twitter) post を oEmbed API 経由で取得 (認証不要)")
+    .option("-f, --format <format>", "出力形式: html | md | text", "html")
+    .option("--theme <theme>", "テーマ: light | dark", "light")
+    .option("--lang <lang>", "言語コード", "ja")
+    .action(async (urlOrId: string, options) => {
+      try {
+        await embedCommand(urlOrId, options);
       } catch (err: any) {
         console.error(`Error: ${err.message}`);
         process.exit(1);
