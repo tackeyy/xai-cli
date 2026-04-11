@@ -14,9 +14,17 @@ function createMockClient(): XaiClient {
 }
 
 function createMockTwitterClient(): TwitterClient {
-  return {
+  const mock: any = {
     replyTweet: vi.fn().mockResolvedValue({ id: "987654321", text: "テスト返信" }),
-  } as unknown as TwitterClient;
+    postTweet: vi.fn().mockResolvedValue({
+      id: "111222333",
+      text: "hello",
+      url: "https://x.com/i/status/111222333",
+      posted_at: "2026-04-11T00:00:00.000Z",
+    }),
+    // buildPostPayload は dry-run 時に CLI から呼ばれる (実 TwitterClient を dummy で new するため、モックは不要)
+  };
+  return mock as TwitterClient;
 }
 
 describe("CLI commands", () => {
@@ -199,6 +207,119 @@ describe("CLI commands", () => {
       await run(["reply", "123456789", "テスト"], undefined, tc);
       expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("X API error 403"));
       expect(exitSpy).toHaveBeenCalledWith(1);
+    });
+  });
+
+  describe("post", () => {
+    it("calls twitterClient.postTweet with text only", async () => {
+      const { twitterClient } = await run(["post", "--text", "hello"]);
+      expect(twitterClient.postTweet).toHaveBeenCalledWith(
+        expect.objectContaining({ text: "hello" }),
+      );
+    });
+
+    it("passes --url and --reply-to through", async () => {
+      const { twitterClient } = await run([
+        "post",
+        "--text",
+        "check",
+        "--url",
+        "https://example.com",
+        "--reply-to",
+        "999",
+      ]);
+      expect(twitterClient.postTweet).toHaveBeenCalledWith({
+        text: "check",
+        url: "https://example.com",
+        replyTo: "999",
+      });
+    });
+
+    it("outputs tweet id and url in human mode", async () => {
+      await run(["post", "--text", "hi"]);
+      expect(logSpy).toHaveBeenCalledWith(
+        expect.stringContaining("111222333"),
+      );
+      expect(logSpy).toHaveBeenCalledWith("https://x.com/i/status/111222333");
+    });
+
+    it("outputs JSON in json mode with tweet_id/tweet_url/posted_at", async () => {
+      await run(["--json", "post", "--text", "hi"]);
+      const output = logSpy.mock.calls[0][0];
+      const parsed = JSON.parse(output);
+      expect(parsed.tweet_id).toBe("111222333");
+      expect(parsed.tweet_url).toBe("https://x.com/i/status/111222333");
+      expect(parsed.posted_at).toBe("2026-04-11T00:00:00.000Z");
+    });
+
+    it("prints error and exit 1 on postTweet failure", async () => {
+      const tc = createMockTwitterClient();
+      (tc.postTweet as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new Error("X API error 429 (retry-after: 60s): rate limit"),
+      );
+      await run(["post", "--text", "x"], undefined, tc);
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("X API error 429"));
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    });
+
+    it("rejects a 281-char ASCII body without calling postTweet (dry-run)", async () => {
+      // dry-run は injected client を使わないので、builder が TweetTooLongError を投げる
+      await run(["post", "--dry-run", "--text", "a".repeat(281)]);
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringMatching(/exceeds 280/));
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    });
+
+    it("rejects a 141-char Japanese body without calling postTweet (dry-run)", async () => {
+      await run(["post", "--dry-run", "--text", "あ".repeat(141)]);
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringMatching(/exceeds 280/));
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    });
+
+    it("dry-run does NOT call postTweet and prints payload", async () => {
+      const { twitterClient } = await run(["post", "--dry-run", "--text", "hi"]);
+      expect(twitterClient.postTweet).not.toHaveBeenCalled();
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("[dry-run]"));
+    });
+
+    it("dry-run + --json outputs structured JSON summary", async () => {
+      await run(["--json", "post", "--dry-run", "--text", "hi"]);
+      const output = logSpy.mock.calls[0][0];
+      const parsed = JSON.parse(output);
+      expect(parsed.dry_run).toBe(true);
+      expect(parsed.weighted_length).toBe(2);
+      expect(parsed.max_length).toBe(280);
+      expect(parsed.payload).toEqual({ text: "hi" });
+      expect(parsed.endpoint).toMatch(/^POST /);
+    });
+
+    it("dry-run appends url to payload text", async () => {
+      await run([
+        "--json",
+        "post",
+        "--dry-run",
+        "--text",
+        "see",
+        "--url",
+        "https://example.com/article",
+      ]);
+      const parsed = JSON.parse(logSpy.mock.calls[0][0]);
+      expect(parsed.payload.text).toBe("see\nhttps://example.com/article");
+      // "see\n" = 4 + URL 23 = 27
+      expect(parsed.weighted_length).toBe(27);
+    });
+
+    it("dry-run includes reply.in_reply_to_tweet_id", async () => {
+      await run([
+        "--json",
+        "post",
+        "--dry-run",
+        "--text",
+        "t",
+        "--reply-to",
+        "42",
+      ]);
+      const parsed = JSON.parse(logSpy.mock.calls[0][0]);
+      expect(parsed.payload.reply).toEqual({ in_reply_to_tweet_id: "42" });
     });
   });
 

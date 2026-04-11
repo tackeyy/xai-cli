@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 import { Command } from "commander";
 import { XaiClient } from "../lib/client.js";
-import { TwitterClient } from "../lib/twitter-client.js";
+import { TwitterClient, TweetTooLongError } from "../lib/twitter-client.js";
 import { embedCommand } from "./embed.js";
+import { computeTweetLength, TWEET_MAX_LENGTH } from "../lib/tweet-length.js";
 
 function createClientFromEnv(): XaiClient {
   const apiKey = process.env.XAI_API_KEY;
@@ -216,6 +217,85 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
         process.exit(1);
       }
     });
+
+  // --- post ---
+  program
+    .command("post")
+    .description("Post a tweet to X (Twitter)")
+    .requiredOption("--text <string>", "Tweet body (max 280 weighted chars)")
+    .option("--url <string>", "Attach a URL (appended to the end of the body with a newline)")
+    .option("--reply-to <tweet-id>", "Reply target tweet ID")
+    .option("--dry-run", "Do not actually post; print the request payload")
+    .action(
+      async (opts: {
+        text: string;
+        url?: string;
+        replyTo?: string;
+        dryRun?: boolean;
+      }) => {
+        try {
+          // --- dry-run は Twitter 認証情報を要求せず、ローカルで payload を組み立てる ---
+          if (opts.dryRun) {
+            // 認証は一切不要なので、バリデーションのためだけにダミー資格情報で client を作る
+            const dummy = new TwitterClient({
+              apiKey: "dry-run",
+              apiSecret: "dry-run",
+              accessToken: "dry-run",
+              accessTokenSecret: "dry-run",
+            });
+            const payload = dummy.buildPostPayload({
+              text: opts.text,
+              url: opts.url,
+              replyTo: opts.replyTo,
+            });
+            const mode = getOutputMode();
+            const summary = {
+              dry_run: true,
+              weighted_length: computeTweetLength(payload.text),
+              max_length: TWEET_MAX_LENGTH,
+              endpoint: "POST https://api.twitter.com/2/tweets",
+              payload,
+            };
+            if (mode === "json") {
+              jsonOutput(summary);
+            } else {
+              console.log(`[dry-run] weighted length: ${summary.weighted_length}/${TWEET_MAX_LENGTH}`);
+              console.log(`[dry-run] endpoint: ${summary.endpoint}`);
+              console.log(`[dry-run] payload: ${JSON.stringify(payload, null, 2)}`);
+            }
+            return;
+          }
+
+          const tc = getTwitterClient();
+          const mode = getOutputMode();
+          const result = await tc.postTweet({
+            text: opts.text,
+            url: opts.url,
+            replyTo: opts.replyTo,
+          });
+
+          if (mode === "json") {
+            jsonOutput({
+              tweet_id: result.id,
+              tweet_url: result.url,
+              posted_at: result.posted_at,
+              text: result.text,
+            });
+          } else {
+            console.log(`Tweet posted (id: ${result.id})`);
+            console.log(result.url);
+          }
+        } catch (err: any) {
+          if (err instanceof TweetTooLongError) {
+            console.error(`Error: ${err.message}`);
+            process.exit(1);
+            return;
+          }
+          console.error(`Error: ${err.message}`);
+          process.exit(1);
+        }
+      },
+    );
 
   // --- embed ---
   program
