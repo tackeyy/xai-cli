@@ -81,6 +81,34 @@ describe("TwitterClient.postTweet", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  it("allows a longer post when maxLength is raised", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ data: { id: "444", text: "ok" } }), {
+        status: 200,
+      }),
+    );
+    const tc = makeClient();
+    await tc.postTweet({
+      text: "a".repeat(281),
+      maxLength: 300,
+    });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips validation when noLengthCheck is true", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ data: { id: "555", text: "ok" } }), {
+        status: 200,
+      }),
+    );
+    const tc = makeClient();
+    await tc.postTweet({
+      text: "あ".repeat(141),
+      noLengthCheck: true,
+    });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
   it("includes the URL in weighted length check before sending", async () => {
     const tc = makeClient();
     // "a" * 258 + " " + URL(23) = 258 + 1 + 23 = 282 > 280
@@ -143,5 +171,17 @@ describe("TwitterClient.buildPostPayload (dry-run helper)", () => {
   it("throws TweetTooLongError when over limit", () => {
     const tc = makeClient();
     expect(() => tc.buildPostPayload({ text: "a".repeat(281) })).toThrow(TweetTooLongError);
+  });
+
+  it("builds longer payload when maxLength is raised", () => {
+    const tc = makeClient();
+    const payload = tc.buildPostPayload({ text: "a".repeat(281), maxLength: 300 });
+    expect(payload).toEqual({ text: "a".repeat(281) });
+  });
+
+  it("skips validation when noLengthCheck is true", () => {
+    const tc = makeClient();
+    const payload = tc.buildPostPayload({ text: "あ".repeat(141), noLengthCheck: true });
+    expect(payload).toEqual({ text: "あ".repeat(141) });
   });
 });

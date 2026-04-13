@@ -11,24 +11,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - `--text <string>` (必須): 本文。280 weighted chars 制限をローカル検証
   - `--url <string>`: 本文末尾に改行区切りで URL を追記
   - `--reply-to <tweet-id>`: 返信先ツイート ID
+  - `--max-length <number>`: ローカルの weighted character limit を上書き（`XAI_MAX_TWEET_LENGTH` でも既定値を変更可能）
+  - `--no-length-check`: ローカルの文字数バリデーションをスキップ
   - `--dry-run`: 実際には投稿せず、組み立てた API payload と weighted 文字数を出力
   - `--json`: 成功時に `tweet_id` / `tweet_url` / `posted_at` / `text` を JSON 出力
   - 認証は既存の `reply` コマンドと同じ X API OAuth 1.0a (`X_API_KEY`, `X_API_SECRET`, `X_ACCESS_TOKEN`, `X_ACCESS_TOKEN_SECRET`)
 - `src/lib/tweet-length.ts`: Twitter 公式の weighted character count 実装。
   - URL は長さに関わらず 23 文字として扱う
   - 日本語・中国語・絵文字は 1 文字 = 2 として扱う (weighted range に基づく)
-  - `computeTweetLength(text)` / `isWithinTweetLimit(text)` / 定数 `TWEET_MAX_LENGTH` / `URL_WEIGHTED_LENGTH` を export
+  - `computeTweetLength(text)` / `isWithinTweetLimit(text, maxLength?)` / 定数 `DEFAULT_TWEET_MAX_LENGTH` / `TWEET_MAX_LENGTH` / `URL_WEIGHTED_LENGTH` を export
 - `TwitterClient.postTweet(input)`: X API v2 `POST /2/tweets` を叩くメソッド。
-  - ローカルで 280 weighted chars の事前バリデーション (fetch を発火させない)
+  - ローカルで weighted chars の事前バリデーション (fetch を発火させない)
+  - `maxLength` / `noLengthCheck` に対応し、X Premium の長文投稿やチェック無効化を許可
   - 成功時に `id` / `text` / `url` (https://x.com/i/status/...) / `posted_at` を返す
   - 失敗時は HTTP status と `retry-after` ヘッダ値を含む Error を投げる
 - `TwitterClient.buildPostPayload(input)`: dry-run / テスト用に送信ボディだけを組み立てるヘルパ
-- `TweetTooLongError`: 280 文字超過時に投げる専用エラー
+- `TweetTooLongError`: 超過した上限値を含めて投げる専用エラー
 
 ### Tests
-- `src/lib/__tests__/tweet-length.test.ts` (14 tests): ASCII / CJK / URL / 境界値
-- `src/lib/__tests__/twitter-client.test.ts` (12 tests): postTweet の正常系・URL 付与・reply・エラー分類
-- `src/cli/__tests__/commands.test.ts`: post コマンドのテストを追加 (全 31 tests)
+- `src/lib/__tests__/tweet-length.test.ts` (15 tests): ASCII / CJK / URL / 境界値 / env override
+- `src/lib/__tests__/twitter-client.test.ts` (16 tests): postTweet の正常系・URL 付与・reply・エラー分類・長文オプション
+- `src/cli/__tests__/commands.test.ts`: post コマンドのテストを追加 (全 35 tests)
 
 ### Docs
 - README.md に `post` コマンドセクションを追加

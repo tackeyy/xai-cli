@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { Command } from "commander";
+import { Command, InvalidArgumentError } from "commander";
 import { XaiClient } from "../lib/client.js";
 import { TwitterClient, TweetTooLongError } from "../lib/twitter-client.js";
 import { embedCommand } from "./embed.js";
@@ -33,6 +33,38 @@ function createTwitterClientFromEnv(): TwitterClient {
 
 function jsonOutput(data: unknown): void {
   console.log(JSON.stringify(data, null, 2));
+}
+
+function parsePositiveInteger(value: string): number {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new InvalidArgumentError("must be a positive integer");
+  }
+  return parsed;
+}
+
+function buildPostInput(opts: {
+  text: string;
+  url?: string;
+  replyTo?: string;
+  maxLength?: number;
+  lengthCheck?: boolean;
+}): Parameters<TwitterClient["postTweet"]>[0] {
+  const input: Parameters<TwitterClient["postTweet"]>[0] = {
+    text: opts.text,
+    url: opts.url,
+    replyTo: opts.replyTo,
+  };
+
+  if (opts.maxLength !== undefined) {
+    input.maxLength = opts.maxLength;
+  }
+
+  if (opts.lengthCheck === false) {
+    input.noLengthCheck = true;
+  }
+
+  return input;
 }
 
 export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?: TwitterClient): Command {
@@ -222,15 +254,26 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
   program
     .command("post")
     .description("Post a tweet to X (Twitter)")
-    .requiredOption("--text <string>", "Tweet body (max 280 weighted chars)")
+    .requiredOption(
+      "--text <string>",
+      `Tweet body (max ${TWEET_MAX_LENGTH} weighted chars by default; override with --max-length or XAI_MAX_TWEET_LENGTH)`,
+    )
     .option("--url <string>", "Attach a URL (appended to the end of the body with a newline)")
     .option("--reply-to <tweet-id>", "Reply target tweet ID")
+    .option(
+      "--max-length <number>",
+      `Override the local weighted character limit (default: ${TWEET_MAX_LENGTH})`,
+      parsePositiveInteger,
+    )
+    .option("--no-length-check", "Skip local tweet-length validation")
     .option("--dry-run", "Do not actually post; print the request payload")
     .action(
       async (opts: {
         text: string;
         url?: string;
         replyTo?: string;
+        maxLength?: number;
+        lengthCheck?: boolean;
         dryRun?: boolean;
       }) => {
         try {
@@ -243,23 +286,24 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
               accessToken: "dry-run",
               accessTokenSecret: "dry-run",
             });
-            const payload = dummy.buildPostPayload({
-              text: opts.text,
-              url: opts.url,
-              replyTo: opts.replyTo,
-            });
+            const payload = dummy.buildPostPayload(buildPostInput(opts));
+            const effectiveMaxLength = opts.lengthCheck === false ? null : (opts.maxLength ?? TWEET_MAX_LENGTH);
             const mode = getOutputMode();
             const summary = {
               dry_run: true,
               weighted_length: computeTweetLength(payload.text),
-              max_length: TWEET_MAX_LENGTH,
+              max_length: effectiveMaxLength,
               endpoint: "POST https://api.twitter.com/2/tweets",
               payload,
             };
             if (mode === "json") {
               jsonOutput(summary);
             } else {
-              console.log(`[dry-run] weighted length: ${summary.weighted_length}/${TWEET_MAX_LENGTH}`);
+              console.log(
+                effectiveMaxLength === null
+                  ? `[dry-run] weighted length: ${summary.weighted_length}/unlimited`
+                  : `[dry-run] weighted length: ${summary.weighted_length}/${effectiveMaxLength}`,
+              );
               console.log(`[dry-run] endpoint: ${summary.endpoint}`);
               console.log(`[dry-run] payload: ${JSON.stringify(payload, null, 2)}`);
             }
@@ -268,11 +312,7 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
 
           const tc = getTwitterClient();
           const mode = getOutputMode();
-          const result = await tc.postTweet({
-            text: opts.text,
-            url: opts.url,
-            replyTo: opts.replyTo,
-          });
+          const result = await tc.postTweet(buildPostInput(opts));
 
           if (mode === "json") {
             jsonOutput({

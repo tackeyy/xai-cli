@@ -92,6 +92,12 @@ xai post --text "新しい記事を公開しました" --url "https://zeimu.ai/c
 # 返信として投稿
 xai post --text "ありがとうございます" --reply-to 1234567890123456789
 
+# 長文投稿（X Premium などで上限を引き上げる）
+xai post --text "..." --max-length 25000
+
+# ローカルの文字数チェックを無効化
+xai post --text "..." --no-length-check
+
 # dry-run（実際には投稿せず、組み立てた payload と weighted 文字数を表示）
 xai post --dry-run --text "チェック" --url "https://example.com"
 
@@ -103,10 +109,11 @@ xai --json post --text "hi"
 **文字数カウント**:
 - URL は長さに関わらず **23 文字** として扱う (t.co 短縮を前提)
 - 日本語・中国語・絵文字は **1 文字 = 2** として扱う (Twitter 公式の weighted 数え方)
-- 上限は **280 weighted chars**。超過時はローカルで即エラー (fetch を発火させない)
+- 上限は **280 weighted chars** がデフォルト。`XAI_MAX_TWEET_LENGTH` または `--max-length` で変更できる
+- `--no-length-check` を付けるとローカルの文字数チェックをスキップできる
 
 **エラーハンドリング**:
-- 280 文字超過: 投稿前にローカル検証で弾く (exit 1)
+- 280 文字超過: 投稿前にローカル検証で弾く (exit 1)。`--max-length` で上限を引き上げた場合はその値を使う
 - 401/403 (認証失敗): 明確なメッセージを stderr に出力 (exit 1)
 - 429 (rate limit): `retry-after` ヘッダ値を併記して exit 1。スクリプト側で待機判断を
 - ネットワーク / 5xx: `TwitterClient.postTweet` レベルでは投げる (リトライは呼び出し側で `withRetry` を利用)

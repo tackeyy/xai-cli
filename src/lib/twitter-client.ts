@@ -21,6 +21,10 @@ export interface PostTweetInput {
   url?: string;
   /** 返信先ツイート ID */
   replyTo?: string;
+  /** Weighted character count の上限。未指定時は TWEET_MAX_LENGTH を使う */
+  maxLength?: number;
+  /** true の場合はローカルの文字数バリデーションをスキップする */
+  noLengthCheck?: boolean;
 }
 
 export interface PostTweetPayload {
@@ -42,9 +46,9 @@ export interface PostTweetResult {
  * 呼び出し側で fetch を発火させずに弾ける。
  */
 export class TweetTooLongError extends Error {
-  constructor(public readonly length: number) {
+  constructor(public readonly length: number, public readonly maxLength: number) {
     super(
-      `Tweet exceeds ${TWEET_MAX_LENGTH} weighted characters (got ${length}). ` +
+      `Tweet exceeds ${maxLength} weighted characters (got ${length}). ` +
         `Note: URLs are counted as 23 characters each, CJK as 2.`,
     );
     this.name = "TweetTooLongError";
@@ -150,14 +154,20 @@ export class TwitterClient {
   /**
    * dry-run 用のヘルパ。
    * 実 API を叩かずに、送信される X API v2 POST /2/tweets のリクエストボディを組み立てる。
-   * 280 文字超過時は TweetTooLongError を投げる。
+   * maxLength を超過した場合は TweetTooLongError を投げる。
    */
   buildPostPayload(input: PostTweetInput): PostTweetPayload {
     const combinedText = this.combineTextAndUrl(input.text, input.url);
 
     const weighted = computeTweetLength(combinedText);
-    if (weighted > TWEET_MAX_LENGTH) {
-      throw new TweetTooLongError(weighted);
+    if (!input.noLengthCheck) {
+      const maxLength = input.maxLength ?? TWEET_MAX_LENGTH;
+      if (!Number.isInteger(maxLength) || maxLength <= 0) {
+        throw new Error("maxLength must be a positive integer");
+      }
+      if (weighted > maxLength) {
+        throw new TweetTooLongError(weighted, maxLength);
+      }
     }
 
     const payload: PostTweetPayload = { text: combinedText };

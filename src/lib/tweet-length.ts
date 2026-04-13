@@ -12,11 +12,27 @@
  *     - U+2032..U+2037  (primes など)
  * - それ以外 (CJK, emoji 等) は 2 文字扱い
  *
- * 上限は weighted で 280。
+ * 上限は weighted で 280 をデフォルトとする。
  */
 
-export const TWEET_MAX_LENGTH = 280;
+export const DEFAULT_TWEET_MAX_LENGTH = 280;
 export const URL_WEIGHTED_LENGTH = 23;
+
+function parseMaxLengthEnv(value: string | undefined): number | undefined {
+  if (value === undefined || value.trim() === "") {
+    return undefined;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    return undefined;
+  }
+
+  return parsed;
+}
+
+export const TWEET_MAX_LENGTH =
+  parseMaxLengthEnv(process.env.XAI_MAX_TWEET_LENGTH) ?? DEFAULT_TWEET_MAX_LENGTH;
 
 // 簡易 URL 検出: http(s)://... を 1 URL とみなして 23 文字に置換する
 // Twitter の実装はより複雑 (t.co 短縮の実ルール) だが、実運用では十分
@@ -55,6 +71,6 @@ export function computeTweetLength(text: string): number {
 /**
  * 投稿本文が 280 文字以内か判定する。
  */
-export function isWithinTweetLimit(text: string): boolean {
-  return computeTweetLength(text) <= TWEET_MAX_LENGTH;
+export function isWithinTweetLimit(text: string, maxLength = TWEET_MAX_LENGTH): boolean {
+  return computeTweetLength(text) <= maxLength;
 }

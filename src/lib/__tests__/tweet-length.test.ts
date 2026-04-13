@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { computeTweetLength, TWEET_MAX_LENGTH, URL_WEIGHTED_LENGTH } from "../tweet-length.js";
+import { describe, it, expect, vi } from "vitest";
+import { computeTweetLength, DEFAULT_TWEET_MAX_LENGTH, TWEET_MAX_LENGTH, URL_WEIGHTED_LENGTH } from "../tweet-length.js";
 
 describe("computeTweetLength", () => {
   describe("ASCII text", () => {
@@ -69,10 +69,28 @@ describe("computeTweetLength", () => {
   describe("constants", () => {
     it("exposes max length of 280", () => {
       expect(TWEET_MAX_LENGTH).toBe(280);
+      expect(DEFAULT_TWEET_MAX_LENGTH).toBe(280);
     });
 
     it("exposes URL weighted length of 23", () => {
       expect(URL_WEIGHTED_LENGTH).toBe(23);
     });
+  });
+
+  it("uses XAI_MAX_TWEET_LENGTH when set before import", async () => {
+    const original = process.env.XAI_MAX_TWEET_LENGTH;
+    process.env.XAI_MAX_TWEET_LENGTH = "500";
+    try {
+      vi.resetModules();
+      const fresh = await import("../tweet-length.js");
+      expect(fresh.TWEET_MAX_LENGTH).toBe(500);
+    } finally {
+      if (original === undefined) {
+        delete process.env.XAI_MAX_TWEET_LENGTH;
+      } else {
+        process.env.XAI_MAX_TWEET_LENGTH = original;
+      }
+      vi.resetModules();
+    }
   });
 });

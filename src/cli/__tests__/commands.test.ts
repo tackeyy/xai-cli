@@ -235,6 +235,31 @@ describe("CLI commands", () => {
       });
     });
 
+    it("passes --max-length through to postTweet", async () => {
+      const { twitterClient } = await run([
+        "post",
+        "--text",
+        "hi",
+        "--max-length",
+        "25000",
+      ]);
+      expect(twitterClient.postTweet).toHaveBeenCalledWith(
+        expect.objectContaining({ maxLength: 25000 }),
+      );
+    });
+
+    it("passes --no-length-check through to postTweet", async () => {
+      const { twitterClient } = await run([
+        "post",
+        "--text",
+        "hi",
+        "--no-length-check",
+      ]);
+      expect(twitterClient.postTweet).toHaveBeenCalledWith(
+        expect.objectContaining({ noLengthCheck: true }),
+      );
+    });
+
     it("outputs tweet id and url in human mode", async () => {
       await run(["post", "--text", "hi"]);
       expect(logSpy).toHaveBeenCalledWith(
@@ -290,6 +315,33 @@ describe("CLI commands", () => {
       expect(parsed.max_length).toBe(280);
       expect(parsed.payload).toEqual({ text: "hi" });
       expect(parsed.endpoint).toMatch(/^POST /);
+    });
+
+    it("dry-run honors --max-length in JSON summary", async () => {
+      await run([
+        "--json",
+        "post",
+        "--dry-run",
+        "--text",
+        "hi",
+        "--max-length",
+        "25000",
+      ]);
+      const parsed = JSON.parse(logSpy.mock.calls[0][0]);
+      expect(parsed.max_length).toBe(25000);
+    });
+
+    it("dry-run shows unlimited when --no-length-check is set", async () => {
+      await run([
+        "--json",
+        "post",
+        "--dry-run",
+        "--text",
+        "hi",
+        "--no-length-check",
+      ]);
+      const parsed = JSON.parse(logSpy.mock.calls[0][0]);
+      expect(parsed.max_length).toBeNull();
     });
 
     it("dry-run appends url to payload text", async () => {
