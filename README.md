@@ -29,6 +29,27 @@ export X_ACCESS_TOKEN="your-x-access-token"
 export X_ACCESS_TOKEN_SECRET="your-x-access-token-secret"
 ```
 
+### X API Bearer Token（following コマンド用）
+
+```bash
+export X_BEARER_TOKEN="your-bearer-token"
+```
+
+### X API OAuth 2.0 User Token（bookmarks コマンド用）
+
+```bash
+export X_OAUTH2_USER_TOKEN="your-oauth2-user-token"
+# オプション: /2/users/me の API 呼び出しを省略
+export X_OAUTH2_USER_ID="your-user-id"
+```
+
+### API Base URL（任意）
+
+```bash
+# デフォルト: https://api.twitter.com
+export X_API_BASE_URL="https://api.x.com"
+```
+
 ## コマンド
 
 ### 認証テスト
@@ -119,6 +140,59 @@ xai --json post --text "hi"
 - ネットワーク / 5xx: `TwitterClient.postTweet` レベルでは投げる (リトライは呼び出し側で `withRetry` を利用)
 
 > **注意**: `post` コマンドには `reply` と同じ X API OAuth 1.0a 認証が必要です。
+
+### フォロー一覧を取得
+
+```bash
+# ハンドル指定
+xai following @zeimu_ai
+
+# ユーザーID指定
+xai following 2244994945
+
+# 全件取得
+xai following @zeimu_ai --all
+
+# フィールド指定
+xai following @zeimu_ai --user-fields description,location,public_metrics
+
+# ページサイズ・ページ制限
+xai following @zeimu_ai --all --max-results 1000 --limit-pages 10
+
+# OAuth 1.0a 認証を使用（デフォルトは bearer）
+xai following @zeimu_ai --auth oauth1
+
+# JSON 出力
+xai --json following @zeimu_ai
+```
+
+> **注意**: `following` コマンドには `X_BEARER_TOKEN` が必要です（`--auth oauth1` 指定時は OAuth 1.0a 認証を使用）。
+
+### ブックマーク操作
+
+```bash
+# ブックマーク一覧
+xai bookmarks list
+xai bookmarks list --all --max-results 100
+
+# フォルダ一覧
+xai bookmarks folders
+
+# 特定フォルダ内のブックマーク
+xai bookmarks folder 1146654567674912769
+
+# ブックマーク検索（クライアント側フィルタリング）
+xai bookmarks grep "税理士法人" --all --ignore-case
+xai bookmarks grep "freee" --folder-id 1146654567674912769
+xai bookmarks grep "AI" --field text --plain-pattern
+
+# JSON 出力
+xai --json bookmarks list
+xai --json bookmarks grep "test"
+```
+
+> **注意**: `bookmarks` コマンドには `X_OAUTH2_USER_TOKEN` が必要です（本人のブックマークのみアクセス可能）。  
+> サーバー側検索 API がないため、`grep` はブックマークを取得してからローカルでフィルタリングします。
 
 ### 出力フォーマット
 
