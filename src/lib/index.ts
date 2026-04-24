@@ -7,3 +7,23 @@ export type {
   XaiRequest,
   XaiResponse,
 } from "./types.js";
+export { TwitterClient, TweetTooLongError } from "./twitter-client.js";
+export type {
+  TwitterClientOptions,
+  PostTweetInput,
+  PostTweetPayload,
+  PostTweetResult,
+  ReplyResult,
+} from "./twitter-client.js";
+export type {
+  TwitterAuthMode,
+  TwitterMeta,
+  TwitterUser,
+  TwitterTweet,
+  TwitterIncludes,
+  TwitterUserLookupResponse,
+  TwitterFollowingResponse,
+  TwitterBookmarkResponse,
+  TwitterBookmarkFolder,
+  TwitterBookmarkFolderResponse,
+} from "./twitter-types.js";
