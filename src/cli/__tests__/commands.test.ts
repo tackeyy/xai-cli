@@ -22,7 +22,62 @@ function createMockTwitterClient(): TwitterClient {
       url: "https://x.com/i/status/111222333",
       posted_at: "2026-04-11T00:00:00.000Z",
     }),
-    // buildPostPayload は dry-run 時に CLI から呼ばれる (実 TwitterClient を dummy で new するため、モックは不要)
+    getUserByUsername: vi.fn().mockResolvedValue({
+      data: { id: "12345", username: "zeimu_ai", name: "Zeimu AI" },
+    }),
+    getFollowing: vi.fn().mockResolvedValue({
+      data: [
+        { id: "100", username: "user1", name: "User One" },
+        { id: "200", username: "user2", name: "User Two" },
+      ],
+      meta: { result_count: 2 },
+    }),
+    getAllFollowing: vi.fn().mockResolvedValue({
+      data: [
+        { id: "100", username: "user1", name: "User One" },
+        { id: "200", username: "user2", name: "User Two" },
+        { id: "300", username: "user3", name: "User Three" },
+      ],
+      meta: { result_count: 3 },
+    }),
+    getAuthenticatedUser: vi.fn().mockResolvedValue({
+      data: { id: "me123", username: "myself", name: "Me" },
+    }),
+    getBookmarks: vi.fn().mockResolvedValue({
+      data: [
+        { id: "t1", text: "bookmark1", author_id: "a1", created_at: "2026-01-01" },
+      ],
+      includes: { users: [{ id: "a1", name: "Author", username: "author1" }] },
+      meta: { result_count: 1 },
+    }),
+    getAllBookmarks: vi.fn().mockResolvedValue({
+      data: [
+        { id: "t1", text: "bookmark1", author_id: "a1" },
+        { id: "t2", text: "bookmark2", author_id: "a2" },
+      ],
+      includes: { users: [{ id: "a1", name: "A1", username: "a1" }, { id: "a2", name: "A2", username: "a2" }] },
+      meta: { result_count: 2 },
+    }),
+    getBookmarkFolders: vi.fn().mockResolvedValue({
+      data: [{ id: "f1", name: "AI" }, { id: "f2", name: "Tax" }],
+      meta: { result_count: 2 },
+    }),
+    getAllBookmarkFolders: vi.fn().mockResolvedValue({
+      data: [{ id: "f1", name: "AI" }, { id: "f2", name: "Tax" }],
+      meta: { result_count: 2 },
+    }),
+    getBookmarksByFolder: vi.fn().mockResolvedValue({
+      data: [{ id: "t3", text: "folder tweet", author_id: "a1" }],
+      meta: { result_count: 1 },
+    }),
+    getAllBookmarksByFolder: vi.fn().mockResolvedValue({
+      data: [{ id: "t3", text: "folder tweet", author_id: "a1" }],
+      meta: { result_count: 1 },
+    }),
+    filterBookmarks: vi.fn().mockReturnValue({
+      data: [{ id: "t1", text: "matched", author_id: "a1" }],
+      meta: { result_count: 1 },
+    }),
   };
   return mock as TwitterClient;
 }
@@ -288,7 +343,6 @@ describe("CLI commands", () => {
     });
 
     it("rejects a 281-char ASCII body without calling postTweet (dry-run)", async () => {
-      // dry-run は injected client を使わないので、builder が TweetTooLongError を投げる
       await run(["post", "--dry-run", "--text", "a".repeat(281)]);
       expect(errorSpy).toHaveBeenCalledWith(expect.stringMatching(/exceeds 280/));
       expect(exitSpy).toHaveBeenCalledWith(1);
@@ -372,6 +426,186 @@ describe("CLI commands", () => {
       ]);
       const parsed = JSON.parse(logSpy.mock.calls[0][0]);
       expect(parsed.payload.reply).toEqual({ in_reply_to_tweet_id: "42" });
+    });
+  });
+
+  describe("following", () => {
+    it("calls getUserByUsername then getFollowing when handle is given", async () => {
+      const { twitterClient } = await run(["following", "@zeimu_ai"]);
+      expect(twitterClient.getUserByUsername).toHaveBeenCalledWith("zeimu_ai", expect.objectContaining({ auth: "bearer" }));
+      expect(twitterClient.getFollowing).toHaveBeenCalledWith("12345", expect.any(Object));
+    });
+
+    it("calls getFollowing directly with numeric user id", async () => {
+      const { twitterClient } = await run(["following", "99999"]);
+      expect(twitterClient.getUserByUsername).not.toHaveBeenCalled();
+      expect(twitterClient.getFollowing).toHaveBeenCalledWith("99999", expect.any(Object));
+    });
+
+    it("calls getAllFollowing when --all is set", async () => {
+      const { twitterClient } = await run(["following", "@zeimu_ai", "--all"]);
+      expect(twitterClient.getAllFollowing).toHaveBeenCalledWith("12345", expect.any(Object));
+    });
+
+    it("outputs following list in human mode", async () => {
+      await run(["following", "99999"]);
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Following: 2"));
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("@user1"));
+    });
+
+    it("outputs JSON in json mode", async () => {
+      await run(["--json", "following", "99999"]);
+      const output = logSpy.mock.calls[0][0];
+      const parsed = JSON.parse(output);
+      expect(parsed.data).toHaveLength(2);
+      expect(parsed.meta.result_count).toBe(2);
+    });
+
+    it("includes resolved_user in JSON when handle lookup is used", async () => {
+      await run(["--json", "following", "@zeimu_ai"]);
+      const parsed = JSON.parse(logSpy.mock.calls[0][0]);
+      expect(parsed.resolved_user).toBeDefined();
+      expect(parsed.resolved_user.username).toBe("zeimu_ai");
+    });
+
+    it("prints error when --all and --pagination-token both set", async () => {
+      await run(["following", "99999", "--all", "--pagination-token", "abc"]);
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("cannot be used together"));
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    });
+
+    it("passes --max-results to getFollowing", async () => {
+      const { twitterClient } = await run(["following", "99999", "--max-results", "500"]);
+      expect(twitterClient.getFollowing).toHaveBeenCalledWith(
+        "99999",
+        expect.objectContaining({ maxResults: 500 }),
+      );
+    });
+
+    it("passes --user-fields to getFollowing", async () => {
+      const { twitterClient } = await run(["following", "99999", "--user-fields", "description,location"]);
+      expect(twitterClient.getFollowing).toHaveBeenCalledWith(
+        "99999",
+        expect.objectContaining({ userFields: ["description", "location"] }),
+      );
+    });
+
+    it("prints error and exit 1 on API failure", async () => {
+      const tc = createMockTwitterClient();
+      (tc.getFollowing as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new Error("X API error 401: Unauthorized"),
+      );
+      await run(["following", "99999"], undefined, tc);
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("401"));
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    });
+  });
+
+  describe("bookmarks list", () => {
+    it("calls getAuthenticatedUser then getBookmarks", async () => {
+      const { twitterClient } = await run(["bookmarks", "list"]);
+      expect(twitterClient.getAuthenticatedUser).toHaveBeenCalled();
+      expect(twitterClient.getBookmarks).toHaveBeenCalledWith("me123", expect.any(Object));
+    });
+
+    it("calls getAllBookmarks when --all is set", async () => {
+      const { twitterClient } = await run(["bookmarks", "list", "--all"]);
+      expect(twitterClient.getAllBookmarks).toHaveBeenCalledWith("me123", expect.any(Object));
+    });
+
+    it("outputs JSON in json mode", async () => {
+      await run(["--json", "bookmarks", "list"]);
+      const parsed = JSON.parse(logSpy.mock.calls[0][0]);
+      expect(parsed.authenticated_user).toBe("me123");
+      expect(parsed.data).toHaveLength(1);
+    });
+
+    it("outputs bookmark info in human mode", async () => {
+      await run(["bookmarks", "list"]);
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("t1"));
+    });
+  });
+
+  describe("bookmarks folders", () => {
+    it("calls getBookmarkFolders", async () => {
+      const { twitterClient } = await run(["bookmarks", "folders"]);
+      expect(twitterClient.getBookmarkFolders).toHaveBeenCalledWith("me123", expect.any(Object));
+    });
+
+    it("outputs folder list in human mode", async () => {
+      await run(["bookmarks", "folders"]);
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("AI"));
+    });
+
+    it("outputs JSON in json mode", async () => {
+      await run(["--json", "bookmarks", "folders"]);
+      const parsed = JSON.parse(logSpy.mock.calls[0][0]);
+      expect(parsed.data).toHaveLength(2);
+    });
+  });
+
+  describe("bookmarks folder", () => {
+    it("calls getBookmarksByFolder with folder id", async () => {
+      const { twitterClient } = await run(["bookmarks", "folder", "f1"]);
+      expect(twitterClient.getBookmarksByFolder).toHaveBeenCalledWith("me123", "f1", expect.any(Object));
+    });
+
+    it("outputs JSON with folder_id in json mode", async () => {
+      await run(["--json", "bookmarks", "folder", "f1"]);
+      const parsed = JSON.parse(logSpy.mock.calls[0][0]);
+      expect(parsed.folder_id).toBe("f1");
+    });
+  });
+
+  describe("bookmarks grep", () => {
+    it("calls getBookmarks then filterBookmarks with pattern", async () => {
+      const { twitterClient } = await run(["bookmarks", "grep", "税理士"]);
+      expect(twitterClient.getBookmarks).toHaveBeenCalled();
+      expect(twitterClient.filterBookmarks).toHaveBeenCalledWith(
+        expect.any(Object),
+        "税理士",
+        expect.objectContaining({ field: "all" }),
+      );
+    });
+
+    it("outputs JSON with pattern and match_count in json mode", async () => {
+      await run(["--json", "bookmarks", "grep", "test"]);
+      const parsed = JSON.parse(logSpy.mock.calls[0][0]);
+      expect(parsed.pattern).toBe("test");
+      expect(parsed.match_count).toBe(1);
+    });
+
+    it("passes --ignore-case to filterBookmarks", async () => {
+      const { twitterClient } = await run(["bookmarks", "grep", "TEST", "--ignore-case"]);
+      expect(twitterClient.filterBookmarks).toHaveBeenCalledWith(
+        expect.any(Object),
+        "TEST",
+        expect.objectContaining({ ignoreCase: true }),
+      );
+    });
+
+    it("passes --field to filterBookmarks", async () => {
+      const { twitterClient } = await run(["bookmarks", "grep", "test", "--field", "text"]);
+      expect(twitterClient.filterBookmarks).toHaveBeenCalledWith(
+        expect.any(Object),
+        "test",
+        expect.objectContaining({ field: "text" }),
+      );
+    });
+
+    it("uses folder source when --folder-id is set", async () => {
+      const { twitterClient } = await run(["bookmarks", "grep", "test", "--folder-id", "f1"]);
+      expect(twitterClient.getBookmarksByFolder).toHaveBeenCalledWith("me123", "f1", expect.any(Object));
+    });
+
+    it("shows no matches message in human mode when nothing found", async () => {
+      const tc = createMockTwitterClient();
+      (tc.filterBookmarks as ReturnType<typeof vi.fn>).mockReturnValue({
+        data: [],
+        meta: { result_count: 0 },
+      });
+      await run(["bookmarks", "grep", "zzz"], undefined, tc);
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('No bookmarks matching'));
     });
   });
 
