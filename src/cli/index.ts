@@ -2,6 +2,7 @@
 import { Command, InvalidArgumentError } from "commander";
 import { XaiClient } from "../lib/client.js";
 import { TwitterClient, TweetTooLongError } from "../lib/twitter-client.js";
+import type { TwitterBookmarkResponse } from "../lib/twitter-types.js";
 import { embedCommand } from "./embed.js";
 import { computeTweetLength, TWEET_MAX_LENGTH } from "../lib/tweet-length.js";
 
@@ -15,20 +16,15 @@ function createClientFromEnv(): XaiClient {
 }
 
 function createTwitterClientFromEnv(): TwitterClient {
-  const apiKey = process.env.X_API_KEY;
-  const apiSecret = process.env.X_API_SECRET;
-  const accessToken = process.env.X_ACCESS_TOKEN;
-  const accessTokenSecret = process.env.X_ACCESS_TOKEN_SECRET;
-
-  if (!apiKey || !apiSecret || !accessToken || !accessTokenSecret) {
-    console.error(
-      "Error: X API credentials not found.\n" +
-      "Please set X_API_KEY, X_API_SECRET, X_ACCESS_TOKEN, X_ACCESS_TOKEN_SECRET in ~/.secrets",
-    );
-    process.exit(1);
-  }
-
-  return new TwitterClient({ apiKey, apiSecret, accessToken, accessTokenSecret });
+  return new TwitterClient({
+    apiKey: process.env.X_API_KEY,
+    apiSecret: process.env.X_API_SECRET,
+    accessToken: process.env.X_ACCESS_TOKEN,
+    accessTokenSecret: process.env.X_ACCESS_TOKEN_SECRET,
+    bearerToken: process.env.X_BEARER_TOKEN,
+    oauth2UserToken: process.env.X_OAUTH2_USER_TOKEN,
+    baseUrl: process.env.X_API_BASE_URL,
+  });
 }
 
 function jsonOutput(data: unknown): void {
@@ -41,6 +37,18 @@ function parsePositiveInteger(value: string): number {
     throw new InvalidArgumentError("must be a positive integer");
   }
   return parsed;
+}
+
+function parseCsv(value: string): string[] {
+  return value.split(",").map((s) => s.trim()).filter(Boolean);
+}
+
+function stripAt(value: string): string {
+  return value.startsWith("@") ? value.slice(1) : value;
+}
+
+function isNumericId(value: string): boolean {
+  return /^\d+$/.test(value);
 }
 
 function buildPostInput(opts: {
@@ -277,9 +285,7 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
         dryRun?: boolean;
       }) => {
         try {
-          // --- dry-run は Twitter 認証情報を要求せず、ローカルで payload を組み立てる ---
           if (opts.dryRun) {
-            // 認証は一切不要なので、バリデーションのためだけにダミー資格情報で client を作る
             const dummy = new TwitterClient({
               apiKey: "dry-run",
               apiSecret: "dry-run",
@@ -337,6 +343,396 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
       },
     );
 
+  // --- following ---
+  program
+    .command("following <user>")
+    .description("Get following list of a user")
+    .option("--user-fields <csv>", "User fields (comma-separated)", parseCsv)
+    .option("--expansions <csv>", "Expansions (comma-separated)", parseCsv)
+    .option("--tweet-fields <csv>", "Tweet fields for expansions (comma-separated)", parseCsv)
+    .option("--max-results <n>", "Max results per page (1-1000)", parsePositiveInteger)
+    .option("--pagination-token <token>", "Pagination token for single page")
+    .option("--all", "Fetch all pages")
+    .option("--limit-pages <n>", "Max pages when using --all", parsePositiveInteger)
+    .option("--auth <mode>", "Auth mode: bearer | oauth1", "bearer")
+    .action(
+      async (
+        user: string,
+        opts: {
+          userFields?: string[];
+          expansions?: string[];
+          tweetFields?: string[];
+          maxResults?: number;
+          paginationToken?: string;
+          all?: boolean;
+          limitPages?: number;
+          auth?: string;
+        },
+      ) => {
+        try {
+          if (opts.all && opts.paginationToken) {
+            console.error("Error: --all and --pagination-token cannot be used together");
+            process.exit(1);
+            return;
+          }
+
+          const tc = getTwitterClient();
+          const mode = getOutputMode();
+          const authMode = (opts.auth === "oauth1" ? "oauth1" : "bearer") as "bearer" | "oauth1";
+
+          let userId: string;
+          let resolvedUser: { id: string; username: string; name?: string } | undefined;
+
+          if (isNumericId(user)) {
+            userId = user;
+          } else {
+            const username = stripAt(user);
+            const lookup = await tc.getUserByUsername(username, { auth: authMode });
+            userId = lookup.data.id;
+            resolvedUser = { id: lookup.data.id, username: lookup.data.username ?? username, name: lookup.data.name };
+          }
+
+          if (opts.all) {
+            const result = await tc.getAllFollowing(userId, {
+              userFields: opts.userFields,
+              expansions: opts.expansions,
+              tweetFields: opts.tweetFields,
+              maxResults: opts.maxResults,
+              limitPages: opts.limitPages,
+              auth: authMode,
+            });
+
+            if (mode === "json") {
+              jsonOutput({ resolved_user: resolvedUser, ...result });
+            } else {
+              formatFollowingOutput(result.data, result.meta?.result_count ?? 0);
+            }
+          } else {
+            const result = await tc.getFollowing(userId, {
+              userFields: opts.userFields,
+              expansions: opts.expansions,
+              tweetFields: opts.tweetFields,
+              maxResults: opts.maxResults,
+              paginationToken: opts.paginationToken,
+              auth: authMode,
+            });
+
+            if (mode === "json") {
+              jsonOutput({ resolved_user: resolvedUser, ...result });
+            } else {
+              formatFollowingOutput(result.data, result.meta?.result_count ?? 0);
+              if (result.meta?.next_token) {
+                console.log(`\n(next page: --pagination-token ${result.meta.next_token})`);
+              }
+            }
+          }
+        } catch (err: any) {
+          console.error(`Error: ${err.message}`);
+          process.exit(1);
+        }
+      },
+    );
+
+  // --- bookmarks ---
+  const bookmarksCmd = program.command("bookmarks").description("Bookmark commands (requires X_OAUTH2_USER_TOKEN)");
+
+  async function resolveUserId(tc: TwitterClient): Promise<string> {
+    const override = process.env.X_OAUTH2_USER_ID;
+    if (override) return override;
+    const me = await tc.getAuthenticatedUser();
+    return me.data.id;
+  }
+
+  bookmarksCmd
+    .command("list")
+    .description("List bookmarks")
+    .option("--tweet-fields <csv>", "Tweet fields (comma-separated)", parseCsv)
+    .option("--expansions <csv>", "Expansions (comma-separated)", parseCsv)
+    .option("--user-fields <csv>", "User fields (comma-separated)", parseCsv)
+    .option("--media-fields <csv>", "Media fields (comma-separated)", parseCsv)
+    .option("--max-results <n>", "Max results per page (1-100)", parsePositiveInteger)
+    .option("--pagination-token <token>", "Pagination token")
+    .option("--all", "Fetch all pages")
+    .option("--limit-pages <n>", "Max pages when using --all", parsePositiveInteger)
+    .action(
+      async (opts: {
+        tweetFields?: string[];
+        expansions?: string[];
+        userFields?: string[];
+        mediaFields?: string[];
+        maxResults?: number;
+        paginationToken?: string;
+        all?: boolean;
+        limitPages?: number;
+      }) => {
+        try {
+          const tc = getTwitterClient();
+          const mode = getOutputMode();
+          const userId = await resolveUserId(tc);
+
+          if (opts.all) {
+            const result = await tc.getAllBookmarks(userId, {
+              tweetFields: opts.tweetFields,
+              expansions: opts.expansions,
+              userFields: opts.userFields,
+              mediaFields: opts.mediaFields,
+              maxResults: opts.maxResults,
+              limitPages: opts.limitPages,
+            });
+
+            if (mode === "json") {
+              jsonOutput({ authenticated_user: userId, ...result });
+            } else {
+              formatBookmarkOutput(result);
+            }
+          } else {
+            const result = await tc.getBookmarks(userId, {
+              tweetFields: opts.tweetFields,
+              expansions: opts.expansions,
+              userFields: opts.userFields,
+              mediaFields: opts.mediaFields,
+              maxResults: opts.maxResults,
+              paginationToken: opts.paginationToken,
+            });
+
+            if (mode === "json") {
+              jsonOutput({ authenticated_user: userId, ...result });
+            } else {
+              formatBookmarkOutput(result);
+              if (result.meta?.next_token) {
+                console.log(`\n(next page: --pagination-token ${result.meta.next_token})`);
+              }
+            }
+          }
+        } catch (err: any) {
+          console.error(`Error: ${err.message}`);
+          process.exit(1);
+        }
+      },
+    );
+
+  bookmarksCmd
+    .command("folders")
+    .description("List bookmark folders")
+    .option("--max-results <n>", "Max results per page", parsePositiveInteger)
+    .option("--pagination-token <token>", "Pagination token")
+    .option("--all", "Fetch all pages")
+    .option("--limit-pages <n>", "Max pages when using --all", parsePositiveInteger)
+    .action(
+      async (opts: {
+        maxResults?: number;
+        paginationToken?: string;
+        all?: boolean;
+        limitPages?: number;
+      }) => {
+        try {
+          const tc = getTwitterClient();
+          const mode = getOutputMode();
+          const userId = await resolveUserId(tc);
+
+          if (opts.all) {
+            const result = await tc.getAllBookmarkFolders(userId, {
+              maxResults: opts.maxResults,
+              limitPages: opts.limitPages,
+            });
+
+            if (mode === "json") {
+              jsonOutput({ authenticated_user: userId, ...result });
+            } else {
+              formatFolderOutput(result.data);
+            }
+          } else {
+            const result = await tc.getBookmarkFolders(userId, {
+              maxResults: opts.maxResults,
+              paginationToken: opts.paginationToken,
+            });
+
+            if (mode === "json") {
+              jsonOutput({ authenticated_user: userId, ...result });
+            } else {
+              formatFolderOutput(result.data);
+              if (result.meta?.next_token) {
+                console.log(`\n(next page: --pagination-token ${result.meta.next_token})`);
+              }
+            }
+          }
+        } catch (err: any) {
+          console.error(`Error: ${err.message}`);
+          process.exit(1);
+        }
+      },
+    );
+
+  bookmarksCmd
+    .command("folder <folder-id>")
+    .description("Get bookmarks from a specific folder")
+    .option("--tweet-fields <csv>", "Tweet fields (comma-separated)", parseCsv)
+    .option("--expansions <csv>", "Expansions (comma-separated)", parseCsv)
+    .option("--user-fields <csv>", "User fields (comma-separated)", parseCsv)
+    .option("--media-fields <csv>", "Media fields (comma-separated)", parseCsv)
+    .option("--max-results <n>", "Max results per page (1-100)", parsePositiveInteger)
+    .option("--pagination-token <token>", "Pagination token")
+    .option("--all", "Fetch all pages")
+    .option("--limit-pages <n>", "Max pages when using --all", parsePositiveInteger)
+    .action(
+      async (
+        folderId: string,
+        opts: {
+          tweetFields?: string[];
+          expansions?: string[];
+          userFields?: string[];
+          mediaFields?: string[];
+          maxResults?: number;
+          paginationToken?: string;
+          all?: boolean;
+          limitPages?: number;
+        },
+      ) => {
+        try {
+          const tc = getTwitterClient();
+          const mode = getOutputMode();
+          const userId = await resolveUserId(tc);
+
+          if (opts.all) {
+            const result = await tc.getAllBookmarksByFolder(userId, folderId, {
+              tweetFields: opts.tweetFields,
+              expansions: opts.expansions,
+              userFields: opts.userFields,
+              mediaFields: opts.mediaFields,
+              maxResults: opts.maxResults,
+              limitPages: opts.limitPages,
+            });
+
+            if (mode === "json") {
+              jsonOutput({ authenticated_user: userId, folder_id: folderId, ...result });
+            } else {
+              formatBookmarkOutput(result);
+            }
+          } else {
+            const result = await tc.getBookmarksByFolder(userId, folderId, {
+              tweetFields: opts.tweetFields,
+              expansions: opts.expansions,
+              userFields: opts.userFields,
+              mediaFields: opts.mediaFields,
+              maxResults: opts.maxResults,
+              paginationToken: opts.paginationToken,
+            });
+
+            if (mode === "json") {
+              jsonOutput({ authenticated_user: userId, folder_id: folderId, ...result });
+            } else {
+              formatBookmarkOutput(result);
+              if (result.meta?.next_token) {
+                console.log(`\n(next page: --pagination-token ${result.meta.next_token})`);
+              }
+            }
+          }
+        } catch (err: any) {
+          console.error(`Error: ${err.message}`);
+          process.exit(1);
+        }
+      },
+    );
+
+  bookmarksCmd
+    .command("grep <pattern>")
+    .description("Search bookmarks by pattern (client-side filtering)")
+    .option("--ignore-case", "Case-insensitive matching")
+    .option("--field <field>", "Field to search: text | author | url | all", "all")
+    .option("--folder-id <id>", "Search within a specific folder")
+    .option("--plain-pattern", "Use plain string matching instead of regex")
+    .option("--tweet-fields <csv>", "Tweet fields (comma-separated)", parseCsv)
+    .option("--expansions <csv>", "Expansions (comma-separated)", parseCsv)
+    .option("--user-fields <csv>", "User fields (comma-separated)", parseCsv)
+    .option("--max-results <n>", "Max results per page", parsePositiveInteger)
+    .option("--all", "Fetch all pages before filtering")
+    .option("--limit-pages <n>", "Max pages when using --all", parsePositiveInteger)
+    .action(
+      async (
+        pattern: string,
+        opts: {
+          ignoreCase?: boolean;
+          field?: string;
+          folderId?: string;
+          plainPattern?: boolean;
+          tweetFields?: string[];
+          expansions?: string[];
+          userFields?: string[];
+          maxResults?: number;
+          all?: boolean;
+          limitPages?: number;
+        },
+      ) => {
+        try {
+          const tc = getTwitterClient();
+          const mode = getOutputMode();
+          const userId = await resolveUserId(tc);
+
+          const defaultExpansions = opts.expansions ?? ["author_id"];
+          const defaultUserFields = opts.userFields ?? ["id", "name", "username"];
+          const defaultTweetFields = opts.tweetFields ?? ["created_at", "author_id", "text"];
+
+          let source: TwitterBookmarkResponse;
+
+          if (opts.folderId) {
+            source = opts.all
+              ? await tc.getAllBookmarksByFolder(userId, opts.folderId, {
+                  tweetFields: defaultTweetFields,
+                  expansions: defaultExpansions,
+                  userFields: defaultUserFields,
+                  maxResults: opts.maxResults,
+                  limitPages: opts.limitPages,
+                })
+              : await tc.getBookmarksByFolder(userId, opts.folderId, {
+                  tweetFields: defaultTweetFields,
+                  expansions: defaultExpansions,
+                  userFields: defaultUserFields,
+                  maxResults: opts.maxResults,
+                });
+          } else {
+            source = opts.all
+              ? await tc.getAllBookmarks(userId, {
+                  tweetFields: defaultTweetFields,
+                  expansions: defaultExpansions,
+                  userFields: defaultUserFields,
+                  maxResults: opts.maxResults,
+                  limitPages: opts.limitPages,
+                })
+              : await tc.getBookmarks(userId, {
+                  tweetFields: defaultTweetFields,
+                  expansions: defaultExpansions,
+                  userFields: defaultUserFields,
+                  maxResults: opts.maxResults,
+                });
+          }
+
+          const filtered = tc.filterBookmarks(source, pattern, {
+            ignoreCase: opts.ignoreCase,
+            field: (opts.field ?? "all") as "text" | "author" | "url" | "all",
+            plainPattern: opts.plainPattern,
+          });
+
+          if (mode === "json") {
+            jsonOutput({
+              pattern,
+              match_count: filtered.meta.result_count,
+              ...filtered,
+            });
+          } else {
+            if (filtered.data.length === 0) {
+              console.log(`No bookmarks matching "${pattern}"`);
+            } else {
+              console.log(`${filtered.data.length} bookmarks matching "${pattern}":`);
+              formatBookmarkOutput(filtered);
+            }
+          }
+        } catch (err: any) {
+          console.error(`Error: ${err.message}`);
+          process.exit(1);
+        }
+      },
+    );
+
   // --- embed ---
   program
     .command("embed <url-or-id>")
@@ -354,6 +750,36 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
     });
 
   return program;
+}
+
+function formatFollowingOutput(data: Array<{ id: string; username?: string; name?: string }>, totalCount: number): void {
+  console.log(`Following: ${totalCount} users`);
+  for (const user of data) {
+    console.log(`@${user.username ?? "?"}\t${user.name ?? ""}\t${user.id}`);
+  }
+}
+
+function formatBookmarkOutput(result: TwitterBookmarkResponse): void {
+  const userMap = new Map<string, { name?: string; username?: string }>();
+  if (result.includes?.users) {
+    for (const u of result.includes.users) {
+      userMap.set(u.id, { name: u.name, username: u.username });
+    }
+  }
+
+  for (const tweet of result.data) {
+    const author = tweet.author_id ? userMap.get(tweet.author_id) : undefined;
+    const authorStr = author ? `@${author.username ?? "?"}` : "";
+    const textSnippet = (tweet.text ?? "").slice(0, 100).replace(/\n/g, " ");
+    const url = `https://x.com/i/status/${tweet.id}`;
+    console.log(`${tweet.id}\t${tweet.created_at ?? ""}\t${authorStr}\t${textSnippet}\t${url}`);
+  }
+}
+
+function formatFolderOutput(data: Array<{ id: string; name: string }>): void {
+  for (const folder of data) {
+    console.log(`${folder.id}\t${folder.name}`);
+  }
 }
 
 // Only parse when this module is the entry point
