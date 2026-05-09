@@ -30,6 +30,7 @@ export interface XaiResponse {
 
 export interface SearchResult {
   text: string;
+  requested_count?: number;
 }
 
 export interface XaiClientOptions {

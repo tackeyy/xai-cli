@@ -39,6 +39,14 @@ function parsePositiveInteger(value: string): number {
   return parsed;
 }
 
+function parseCount(value: string): number {
+  const parsed = parsePositiveInteger(value);
+  if (parsed > 1000) {
+    throw new InvalidArgumentError("must be between 1 and 1000");
+  }
+  return parsed;
+}
+
 function parseCsv(value: string): string[] {
   return value.split(",").map((s) => s.trim()).filter(Boolean);
 }
@@ -132,6 +140,7 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
     .option("--from <date>", "Start date (YYYY-MM-DD)")
     .option("--to <date>", "End date (YYYY-MM-DD)")
     .option("--exclude <handles>", "Exclude handles (comma-separated)")
+    .option("--count <n>", "Target number of posts to collect (1-1000)", parseCount)
     .action(async (query, opts) => {
       try {
         const client = getClient();
@@ -140,6 +149,7 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
           fromDate: opts.from,
           toDate: opts.to,
           excludeHandles: opts.exclude?.split(","),
+          count: opts.count,
         });
 
         if (mode === "json") {
@@ -159,6 +169,7 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
     .description("Get recent posts from a user")
     .option("--from <date>", "Start date (YYYY-MM-DD)")
     .option("--to <date>", "End date (YYYY-MM-DD)")
+    .option("--count <n>", "Target number of posts to collect (1-1000)", parseCount)
     .action(async (handle, opts) => {
       try {
         const client = getClient();
@@ -166,11 +177,27 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
         const result = await client.getUser(handle, {
           fromDate: opts.from,
           toDate: opts.to,
+          count: opts.count,
         });
+        let profile: Awaited<ReturnType<TwitterClient["getUserProfileByUsername"]>> | null = null;
+        let profileError: string | undefined;
+        try {
+          profile = await getTwitterClient().getUserProfileByUsername(stripAt(handle));
+        } catch (err: any) {
+          profileError = err?.message ?? String(err);
+        }
 
         if (mode === "json") {
-          jsonOutput(result);
+          jsonOutput({
+            ...result,
+            profile,
+            ...(profileError && { profile_error: profileError }),
+          });
         } else {
+          if (profile) {
+            console.log(`@${profile.username ?? stripAt(handle)}\tfollowers=${profile.followers_count ?? "null"}\tfollowing=${profile.following_count ?? "null"}\tverified=${profile.verified ?? "null"}`);
+            if (profile.description) console.log(profile.description);
+          }
           console.log(result.text);
         }
       } catch (err: any) {
@@ -178,6 +205,82 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
         process.exit(1);
       }
     });
+
+  // --- timeline ---
+  program
+    .command("timeline <user>")
+    .description("Get a structured user timeline via X API v2")
+    .option("--tweet-fields <csv>", "Tweet fields (comma-separated)", parseCsv)
+    .option("--expansions <csv>", "Expansions (comma-separated)", parseCsv)
+    .option("--user-fields <csv>", "User fields for expansions (comma-separated)", parseCsv)
+    .option("--media-fields <csv>", "Media fields (comma-separated)", parseCsv)
+    .option("--max-results <n>", "Max results per page (5-100)", parsePositiveInteger)
+    .option("--pagination-token <token>", "Pagination token for single page")
+    .option("--count <n>", "Fetch up to N tweets across pages (1-1000)", parseCount)
+    .option("--auth <mode>", "Auth mode: bearer | oauth1", "bearer")
+    .action(
+      async (
+        user: string,
+        opts: {
+          tweetFields?: string[];
+          expansions?: string[];
+          userFields?: string[];
+          mediaFields?: string[];
+          maxResults?: number;
+          paginationToken?: string;
+          count?: number;
+          auth?: string;
+        },
+      ) => {
+        try {
+          if (opts.count && opts.paginationToken) {
+            console.error("Error: --count and --pagination-token cannot be used together");
+            process.exit(1);
+            return;
+          }
+
+          const tc = getTwitterClient();
+          const mode = getOutputMode();
+          const authMode = (opts.auth === "oauth1" ? "oauth1" : "bearer") as "bearer" | "oauth1";
+
+          let userId: string;
+          let resolvedUser: { id: string; username: string; name?: string } | undefined;
+          if (isNumericId(user)) {
+            userId = user;
+          } else {
+            const username = stripAt(user);
+            const lookup = await tc.getUserByUsername(username, { auth: authMode });
+            userId = lookup.data.id;
+            resolvedUser = { id: lookup.data.id, username: lookup.data.username ?? username, name: lookup.data.name };
+          }
+
+          const baseOpts = {
+            tweetFields: opts.tweetFields,
+            expansions: opts.expansions,
+            userFields: opts.userFields,
+            mediaFields: opts.mediaFields,
+            maxResults: opts.maxResults,
+            auth: authMode,
+          };
+          const result = opts.count
+            ? await tc.getUserTimelineCount(userId, { ...baseOpts, count: opts.count })
+            : await tc.getUserTimeline(userId, { ...baseOpts, paginationToken: opts.paginationToken });
+
+          if (mode === "json") {
+            jsonOutput({ resolved_user: resolvedUser, ...result });
+          } else {
+            console.log(`Timeline: ${result.meta?.result_count ?? result.data.length} tweets`);
+            formatTimelineOutput(result.data);
+            if (result.meta?.next_token) {
+              console.log(`\n(next page: --pagination-token ${result.meta.next_token})`);
+            }
+          }
+        } catch (err: any) {
+          console.error(`Error: ${err.message}`);
+          process.exit(1);
+        }
+      },
+    );
 
   // --- tweet ---
   program
@@ -773,6 +876,35 @@ function formatBookmarkOutput(result: TwitterBookmarkResponse): void {
     const textSnippet = (tweet.text ?? "").slice(0, 100).replace(/\n/g, " ");
     const url = `https://x.com/i/status/${tweet.id}`;
     console.log(`${tweet.id}\t${tweet.created_at ?? ""}\t${authorStr}\t${textSnippet}\t${url}`);
+  }
+}
+
+function formatTimelineOutput(data: Array<{
+  id: string;
+  text?: string;
+  created_at?: string;
+  retweet_count?: number | null;
+  reply_count?: number | null;
+  quote_count?: number | null;
+  like_count?: number | null;
+  bookmark_count?: number | null;
+  view_count?: number | null;
+}>): void {
+  for (const tweet of data) {
+    const textSnippet = (tweet.text ?? "").slice(0, 100).replace(/\n/g, " ");
+    console.log(
+      [
+        tweet.id,
+        tweet.created_at ?? "",
+        `rt=${tweet.retweet_count ?? "null"}`,
+        `reply=${tweet.reply_count ?? "null"}`,
+        `quote=${tweet.quote_count ?? "null"}`,
+        `like=${tweet.like_count ?? "null"}`,
+        `bookmark=${tweet.bookmark_count ?? "null"}`,
+        `view=${tweet.view_count ?? "null"}`,
+        textSnippet,
+      ].join("\t"),
+    );
   }
 }
 
