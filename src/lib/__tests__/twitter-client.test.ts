@@ -390,6 +390,115 @@ describe("TwitterClient.getUserByUsername", () => {
     expect(result.following_count).toBeNull();
     expect(result.verified).toBeNull();
   });
+
+  it("getUserDmStatus returns true when receives_your_dm is true", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({
+        data: {
+          id: "123",
+          username: "test",
+          receives_your_dm: true,
+          connection_status: ["following"],
+          protected: false,
+          verified: true,
+        },
+      }), { status: 200 }),
+    );
+
+    const tc = makeBearerClient();
+    const result = await tc.getUserDmStatus("@test");
+
+    expect(result).toMatchObject({
+      username: "test",
+      user_id: "123",
+      can_receive_dm: "true",
+      reason: "receives_your_dm=true",
+      receives_your_dm: true,
+      connection_status: ["following"],
+      protected: false,
+    });
+    expect(new Date(result.fetched_at).toISOString()).toBe(result.fetched_at);
+    const url = fetchSpy.mock.calls[0][0] as string;
+    expect(url).toContain("/2/users/by/username/test");
+    expect(url).toContain("user.fields=receives_your_dm%2Cconnection_status%2Cprotected%2Cverified");
+  });
+
+  it("getUserDmStatus returns false when receives_your_dm is false", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({
+        data: {
+          id: "123",
+          username: "test",
+          receives_your_dm: false,
+          connection_status: ["followed_by"],
+          protected: false,
+        },
+      }), { status: 200 }),
+    );
+
+    const tc = makeBearerClient();
+    const result = await tc.getUserDmStatus("test");
+
+    expect(result.can_receive_dm).toBe("false");
+    expect(result.reason).toBe("receives_your_dm=false");
+    expect(result.receives_your_dm).toBe(false);
+    expect(result.connection_status).toEqual(["followed_by"]);
+  });
+
+  it("getUserDmStatus returns unknown when receives_your_dm is missing", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({
+        data: {
+          id: "123",
+          username: "test",
+          connection_status: ["following"],
+          protected: false,
+        },
+      }), { status: 200 }),
+    );
+
+    const tc = makeBearerClient();
+    const result = await tc.getUserDmStatus("test");
+
+    expect(result.can_receive_dm).toBe("unknown");
+    expect(result.reason).toBe("field_not_returned");
+    expect(result.receives_your_dm).toBeNull();
+  });
+
+  it("getUserDmStatus returns unknown for protected accounts not followed by authenticated user", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({
+        data: {
+          id: "123",
+          username: "test",
+          receives_your_dm: true,
+          connection_status: ["followed_by"],
+          protected: true,
+        },
+      }), { status: 200 }),
+    );
+
+    const tc = makeBearerClient();
+    const result = await tc.getUserDmStatus("test");
+
+    expect(result.can_receive_dm).toBe("unknown");
+    expect(result.reason).toBe("protected_account_not_following");
+    expect(result.receives_your_dm).toBe(true);
+  });
+
+  it("getUserDmStatus surfaces deleted account 404 errors", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ title: "Not Found" }), { status: 404 }),
+    );
+
+    const tc = makeBearerClient();
+    await expect(tc.getUserDmStatus("deleted")).rejects.toThrow(/X API error 404/);
+  });
+
+  it("getUserDmStatus throws when bearer token is missing", async () => {
+    const tc = new TwitterClient({});
+    await expect(tc.getUserDmStatus("test")).rejects.toThrow(/X_BEARER_TOKEN/);
+  });
 });
 
 // --- getFollowing tests ---

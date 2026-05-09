@@ -82,6 +82,18 @@ xai --json user @elonmusk
 `profile` には `followers_count`, `following_count`, `verified`, `created_at`, `description` が含まれます。
 Bearer Token がない場合でも、従来どおり xAI `x_search` の投稿取得は継続します。
 
+### DM 受信可否チェック
+
+```bash
+xai dm-check xat_t0b
+xai dm-check @maroncat11 --json
+xai --json dm-check @maroncat11
+```
+
+`dm-check` は X API v2 `/2/users/by/username/:username` の `receives_your_dm` / `connection_status` / `protected` を使い、認証ユーザーから対象アカウントへ DM できる可能性を事前確認します。
+`can_receive_dm` は `"true"`, `"false"`, `"unknown"` の文字列で返します。`receives_your_dm` が返らない場合や、protected アカウントをフォローしていない場合は `unknown` です。
+`X_BEARER_TOKEN` が必要です。`receives_your_dm` は認証ユーザーとの関係に依存するため、app-only Bearer では field が欠落する可能性があります。
+
 ### ユーザータイムライン取得（構造化）
 
 ```bash

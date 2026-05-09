@@ -29,4 +29,6 @@ export type {
   TwitterEngagementMetrics,
   TwitterUserProfile,
   TwitterUserTimelineResponse,
+  DmAvailability,
+  DmCheckResult,
 } from "./twitter-types.js";

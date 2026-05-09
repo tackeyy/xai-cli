@@ -35,6 +35,16 @@ function createMockTwitterClient(): TwitterClient {
       followers_count: 100,
       following_count: 50,
     }),
+    getUserDmStatus: vi.fn().mockResolvedValue({
+      username: "zeimu_ai",
+      user_id: "12345",
+      can_receive_dm: "false",
+      reason: "receives_your_dm=false",
+      receives_your_dm: false,
+      connection_status: ["followed_by"],
+      protected: false,
+      fetched_at: "2026-05-09T11:55:00.000Z",
+    }),
     getUserTimeline: vi.fn().mockResolvedValue({
       data: [{ id: "t1", text: "hello", like_count: 1, retweet_count: null, reply_count: null, quote_count: null, bookmark_count: null, view_count: null }],
       meta: { result_count: 1 },
@@ -259,6 +269,54 @@ describe("CLI commands", () => {
       expect(parsed.profile.followers_count).toBe(100);
       expect(parsed.profile.following_count).toBe(50);
       expect(parsed.profile.verified).toBe(true);
+    });
+  });
+
+  describe("dm-check", () => {
+    it("checks DM status for a username without @ prefix", async () => {
+      const { twitterClient } = await run(["dm-check", "@zeimu_ai"]);
+      expect(twitterClient.getUserDmStatus).toHaveBeenCalledWith("zeimu_ai", expect.any(Object));
+    });
+
+    it("outputs dm-check JSON when command --json is set", async () => {
+      await run(["dm-check", "zeimu_ai", "--json"]);
+      const parsed = JSON.parse(logSpy.mock.calls[0][0]);
+      expect(parsed).toMatchObject({
+        username: "zeimu_ai",
+        user_id: "12345",
+        can_receive_dm: "false",
+        reason: "receives_your_dm=false",
+        receives_your_dm: false,
+        connection_status: ["followed_by"],
+        protected: false,
+      });
+    });
+
+    it("outputs dm-check JSON when global --json is set", async () => {
+      await run(["--json", "dm-check", "zeimu_ai"]);
+      const parsed = JSON.parse(logSpy.mock.calls[0][0]);
+      expect(parsed.can_receive_dm).toBe("false");
+    });
+
+    it("outputs human-readable dm-check result", async () => {
+      await run(["dm-check", "zeimu_ai"]);
+
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("DM Check Result for @zeimu_ai"));
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("can_receive_dm: false"));
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("reason: receives_your_dm=false"));
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("connection_status: [followed_by]"));
+    });
+
+    it("prints error and exits 1 on dm-check failure", async () => {
+      const tc = createMockTwitterClient();
+      (tc.getUserDmStatus as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new Error("X API error 404: Not Found"),
+      );
+
+      await run(["dm-check", "deleted"], undefined, tc);
+
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("X API error 404"));
+      expect(exitSpy).toHaveBeenCalledWith(1);
     });
   });
 

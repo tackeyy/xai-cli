@@ -2,7 +2,7 @@
 import { Command, InvalidArgumentError } from "commander";
 import { XaiClient } from "../lib/client.js";
 import { TwitterClient, TweetTooLongError } from "../lib/twitter-client.js";
-import type { TwitterBookmarkResponse } from "../lib/twitter-types.js";
+import type { DmCheckResult, TwitterBookmarkResponse } from "../lib/twitter-types.js";
 import { embedCommand } from "./embed.js";
 import { computeTweetLength, TWEET_MAX_LENGTH } from "../lib/tweet-length.js";
 
@@ -57,6 +57,17 @@ function stripAt(value: string): string {
 
 function isNumericId(value: string): boolean {
   return /^\d+$/.test(value);
+}
+
+function formatDmCheckHuman(result: DmCheckResult): void {
+  console.log(`DM Check Result for @${result.username}`);
+  console.log(`  user_id: ${result.user_id}`);
+  console.log(`  can_receive_dm: ${result.can_receive_dm}`);
+  console.log(`  reason: ${result.reason}`);
+  console.log(`  receives_your_dm: ${result.receives_your_dm}`);
+  console.log(`  connection_status: [${result.connection_status.join(",")}]`);
+  console.log(`  protected: ${result.protected}`);
+  console.log(`  fetched_at: ${result.fetched_at}`);
 }
 
 function buildPostInput(opts: {
@@ -199,6 +210,27 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
             if (profile.description) console.log(profile.description);
           }
           console.log(result.text);
+        }
+      } catch (err: any) {
+        console.error(`Error: ${err.message}`);
+        process.exit(1);
+      }
+    });
+
+  // --- dm-check ---
+  program
+    .command("dm-check <username>")
+    .description("Check if @username can receive DM from authenticated user (X API v2)")
+    .option("--json", "Output in JSON format")
+    .action(async (username, opts) => {
+      try {
+        const tc = getTwitterClient();
+        const result = await tc.getUserDmStatus(stripAt(username), { auth: "bearer" });
+
+        if (opts.json || getOutputMode() === "json") {
+          jsonOutput(result);
+        } else {
+          formatDmCheckHuman(result);
         }
       } catch (err: any) {
         console.error(`Error: ${err.message}`);
