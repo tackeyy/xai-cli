@@ -83,6 +83,23 @@ describe("XaiClient", () => {
       expect(body.input[0].content).toContain("最大100件");
     });
 
+    it.each([1, 999, 1000])("should accept count boundary value %i", async (count) => {
+      const mockFetch = vi.fn().mockResolvedValue(mockXaiResponse("results"));
+      globalThis.fetch = mockFetch;
+
+      const client = new XaiClient({ apiKey: "test-key" });
+      const result = await client.search("AI", { count });
+
+      expect(result.requested_count).toBe(count);
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(body.input[0].content).toContain(`最大${count}件`);
+    });
+
+    it.each([0, -1])("should reject count below the minimum: %i", async (count) => {
+      const client = new XaiClient({ apiKey: "test-key" });
+      await expect(client.search("AI", { count })).rejects.toThrow("count must be between 1 and 1000");
+    });
+
     it("should reject count over the maximum", async () => {
       const client = new XaiClient({ apiKey: "test-key" });
       await expect(client.search("AI", { count: 1001 })).rejects.toThrow("count must be between 1 and 1000");
@@ -134,6 +151,23 @@ describe("XaiClient", () => {
       expect(result.requested_count).toBe(10);
       const body = JSON.parse(mockFetch.mock.calls[0][1].body);
       expect(body.input[0].content).toContain("最大10件");
+    });
+
+    it.each([1, 999, 1000])("should accept user count boundary value %i", async (count) => {
+      const mockFetch = vi.fn().mockResolvedValue(mockXaiResponse("User tweets"));
+      globalThis.fetch = mockFetch;
+
+      const client = new XaiClient({ apiKey: "test-key" });
+      const result = await client.getUser("elonmusk", { count });
+
+      expect(result.requested_count).toBe(count);
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(body.input[0].content).toContain(`最大${count}件`);
+    });
+
+    it.each([0, -1])("should reject user count below the minimum: %i", async (count) => {
+      const client = new XaiClient({ apiKey: "test-key" });
+      await expect(client.getUser("elonmusk", { count })).rejects.toThrow("count must be between 1 and 1000");
     });
   });
 

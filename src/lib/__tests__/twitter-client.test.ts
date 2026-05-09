@@ -591,6 +591,85 @@ describe("TwitterClient.getUserTimeline", () => {
     expect(result.meta.result_count).toBe(3);
   });
 
+  it("getUserTimelineCount includes all tweets across three pages when there are no duplicates", async () => {
+    fetchSpy
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({
+          data: [{ id: "t1" }, { id: "t2" }],
+          meta: { result_count: 2, next_token: "page2" },
+        }), { status: 200 }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({
+          data: [{ id: "t3" }, { id: "t4" }],
+          meta: { result_count: 2, next_token: "page3" },
+        }), { status: 200 }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({
+          data: [{ id: "t5" }],
+          meta: { result_count: 1 },
+        }), { status: 200 }),
+      );
+
+    const tc = makeBearerClient();
+    const result = await tc.getUserTimelineCount("123", { count: 5, maxResults: 2 });
+
+    expect(result.data.map((t) => t.id)).toEqual(["t1", "t2", "t3", "t4", "t5"]);
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
+    expect(result.meta.result_count).toBe(5);
+    expect(result.meta.partial).toBe(false);
+  });
+
+  it("getUserTimelineCount removes duplicate tweet ids across pages", async () => {
+    fetchSpy
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({
+          data: [{ id: "t1" }, { id: "t2" }],
+          meta: { result_count: 2, next_token: "page2" },
+        }), { status: 200 }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({
+          data: [{ id: "t2" }, { id: "t3" }],
+          meta: { result_count: 2 },
+        }), { status: 200 }),
+      );
+
+    const tc = makeBearerClient();
+    const result = await tc.getUserTimelineCount("123", { count: 3, maxResults: 2 });
+
+    expect(result.data.map((t) => t.id)).toEqual(["t1", "t2", "t3"]);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(result.meta.result_count).toBe(3);
+    expect(result.meta.partial).toBe(false);
+  });
+
+  it("getUserTimelineCount stops when only duplicates remain and no next token exists", async () => {
+    fetchSpy
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({
+          data: [{ id: "t1" }, { id: "t2" }],
+          meta: { result_count: 2, next_token: "page2" },
+        }), { status: 200 }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({
+          data: [{ id: "t1" }, { id: "t2" }],
+          meta: { result_count: 2 },
+        }), { status: 200 }),
+      );
+
+    const tc = makeBearerClient();
+    const result = await tc.getUserTimelineCount("123", { count: 3, maxResults: 2 });
+
+    expect(result.data.map((t) => t.id)).toEqual(["t1", "t2"]);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(result.meta.result_count).toBe(2);
+    expect(result.meta.requested_count).toBe(3);
+    expect(result.meta.partial).toBe(true);
+  });
+
   it("getUserTimelineCount marks partial when API has fewer tweets than requested", async () => {
     fetchSpy.mockResolvedValue(
       new Response(JSON.stringify({
