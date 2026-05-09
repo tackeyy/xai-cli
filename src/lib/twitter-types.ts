@@ -12,6 +12,8 @@ export interface TwitterUser {
   location?: string;
   verified?: boolean;
   protected?: boolean;
+  receives_your_dm?: boolean;
+  connection_status?: string[];
   pinned_tweet_id?: string;
   public_metrics?: {
     followers_count?: number;
@@ -95,6 +97,19 @@ export interface TwitterUserProfile {
   created_at: string | null;
   followers_count: number | null;
   following_count: number | null;
+}
+
+export type DmAvailability = "true" | "false" | "unknown";
+
+export interface DmCheckResult {
+  username: string;
+  user_id: string;
+  can_receive_dm: DmAvailability;
+  reason: string;
+  receives_your_dm: boolean | null;
+  connection_status: string[];
+  protected: boolean;
+  fetched_at: string;
 }
 
 export interface TwitterBookmarkFolder {

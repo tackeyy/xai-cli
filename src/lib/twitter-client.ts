@@ -1,6 +1,8 @@
 import { createHmac } from "node:crypto";
 import { computeTweetLength, TWEET_MAX_LENGTH } from "./tweet-length.js";
 import type {
+  DmAvailability,
+  DmCheckResult,
   TwitterAuthMode,
   TwitterEngagementMetrics,
   TwitterUserLookupResponse,
@@ -75,6 +77,7 @@ const DEFAULT_TIMELINE_TWEET_FIELDS = [
   "non_public_metrics",
 ];
 const DEFAULT_USER_PROFILE_FIELDS = ["description", "created_at", "verified", "public_metrics"];
+const DM_STATUS_USER_FIELDS = ["receives_your_dm", "connection_status", "protected", "verified"];
 const MAX_COUNT = 1000;
 
 export class TwitterClient {
@@ -276,6 +279,37 @@ export class TwitterClient {
       created_at: typeof user["created_at"] === "string" ? user["created_at"] : null,
       followers_count: this.metricOrNull(metrics.followers_count),
       following_count: this.metricOrNull(metrics.following_count),
+    };
+  }
+
+  async getUserDmStatus(
+    username: string,
+    opts?: {
+      auth?: Extract<TwitterAuthMode, "bearer" | "oauth2-user">;
+    },
+  ): Promise<DmCheckResult> {
+    const normalizedUsername = this.stripAt(username);
+    const response = await this.getUserByUsername(normalizedUsername, {
+      auth: opts?.auth ?? "bearer",
+      userFields: DM_STATUS_USER_FIELDS,
+    });
+    const user = response.data;
+    const connectionStatus = Array.isArray(user.connection_status)
+      ? user.connection_status.filter((value): value is string => typeof value === "string")
+      : [];
+    const protectedAccount = user.protected === true;
+    const receivesYourDm = typeof user.receives_your_dm === "boolean" ? user.receives_your_dm : undefined;
+    const verdict = this.determineDmStatus(receivesYourDm, protectedAccount, connectionStatus);
+
+    return {
+      username: user.username ?? normalizedUsername,
+      user_id: user.id,
+      can_receive_dm: verdict.can_receive_dm,
+      reason: verdict.reason,
+      receives_your_dm: receivesYourDm ?? null,
+      connection_status: connectionStatus,
+      protected: protectedAccount,
+      fetched_at: new Date().toISOString(),
     };
   }
 
@@ -792,6 +826,27 @@ export class TwitterClient {
 
   private metricOrNull(value: unknown): number | null {
     return typeof value === "number" && Number.isFinite(value) ? value : null;
+  }
+
+  private stripAt(value: string): string {
+    return value.startsWith("@") ? value.slice(1) : value;
+  }
+
+  private determineDmStatus(
+    receivesYourDm: boolean | undefined,
+    protectedAccount: boolean,
+    connectionStatus: string[],
+  ): { can_receive_dm: DmAvailability; reason: string } {
+    if (protectedAccount && !connectionStatus.includes("following")) {
+      return { can_receive_dm: "unknown", reason: "protected_account_not_following" };
+    }
+    if (receivesYourDm === true) {
+      return { can_receive_dm: "true", reason: "receives_your_dm=true" };
+    }
+    if (receivesYourDm === false) {
+      return { can_receive_dm: "false", reason: "receives_your_dm=false" };
+    }
+    return { can_receive_dm: "unknown", reason: "field_not_returned" };
   }
 
   private normalizeEngagement(tweet: TwitterTweet): TwitterEngagementMetrics {
