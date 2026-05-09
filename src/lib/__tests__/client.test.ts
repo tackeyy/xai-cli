@@ -70,6 +70,23 @@ describe("XaiClient", () => {
       const body = JSON.parse(mockFetch.mock.calls[0][1].body);
       expect(body.tools[0].excluded_x_handles).toEqual(["spammer1", "spammer2"]);
     });
+
+    it("should include requested count in the prompt when specified", async () => {
+      const mockFetch = vi.fn().mockResolvedValue(mockXaiResponse("results"));
+      globalThis.fetch = mockFetch;
+
+      const client = new XaiClient({ apiKey: "test-key" });
+      const result = await client.search("AI", { count: 100 });
+
+      expect(result.requested_count).toBe(100);
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(body.input[0].content).toContain("最大100件");
+    });
+
+    it("should reject count over the maximum", async () => {
+      const client = new XaiClient({ apiKey: "test-key" });
+      await expect(client.search("AI", { count: 1001 })).rejects.toThrow("count must be between 1 and 1000");
+    });
   });
 
   describe("getUser", () => {
@@ -105,6 +122,18 @@ describe("XaiClient", () => {
 
       const body = JSON.parse(mockFetch.mock.calls[0][1].body);
       expect(body.tools[0].from_date).toBe("2026-03-01");
+    });
+
+    it("should include requested count in the user prompt when specified", async () => {
+      const mockFetch = vi.fn().mockResolvedValue(mockXaiResponse("User tweets"));
+      globalThis.fetch = mockFetch;
+
+      const client = new XaiClient({ apiKey: "test-key" });
+      const result = await client.getUser("elonmusk", { count: 10 });
+
+      expect(result.requested_count).toBe(10);
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(body.input[0].content).toContain("最大10件");
     });
   });
 

@@ -8,6 +8,7 @@ import type {
 import { XaiApiError, withRetry } from "./retry.js";
 
 const TWEET_URL_RE = /(?:x\.com|twitter\.com)\/([^/]+)\/status\/(\d+)/;
+const MAX_COUNT = 1000;
 
 export class XaiClient {
   private readonly apiKey: string;
@@ -81,14 +82,30 @@ export class XaiClient {
     return handle.replace(/^@/, "");
   }
 
+  private validateCount(count: number | undefined): number | undefined {
+    if (count === undefined) return undefined;
+    if (!Number.isInteger(count) || count <= 0 || count > MAX_COUNT) {
+      throw new Error(`count must be between 1 and ${MAX_COUNT}`);
+    }
+    return count;
+  }
+
+  private countInstruction(count: number | undefined): string {
+    return count === undefined
+      ? ""
+      : ` 最大${count}件を目標に、投稿URL・投稿日時・投稿本文・エンゲージメント指標が分かる場合は含めてください。`;
+  }
+
   async search(
     query: string,
     opts?: {
       fromDate?: string;
       toDate?: string;
       excludeHandles?: string[];
+      count?: number;
     },
   ): Promise<SearchResult> {
+    const count = this.validateCount(opts?.count);
     const tool = this.buildTool({
       from_date: opts?.fromDate,
       to_date: opts?.toDate,
@@ -100,20 +117,21 @@ export class XaiClient {
       input: [
         {
           role: "user",
-          content: `「${query}」に関するXの投稿を検索してください`,
+          content: `「${query}」に関するXの投稿を検索してください。${this.countInstruction(count)}`,
         },
       ],
       tools: [tool],
     });
 
-    return { text: this.extractText(response) };
+    return { text: this.extractText(response), ...(count !== undefined && { requested_count: count }) };
   }
 
   async getUser(
     handle: string,
-    opts?: { fromDate?: string; toDate?: string },
+    opts?: { fromDate?: string; toDate?: string; count?: number },
   ): Promise<SearchResult> {
     const cleanHandle = this.stripAt(handle);
+    const count = this.validateCount(opts?.count);
     const tool = this.buildTool({
       allowed_x_handles: [cleanHandle],
       from_date: opts?.fromDate,
@@ -125,13 +143,13 @@ export class XaiClient {
       input: [
         {
           role: "user",
-          content: `@${cleanHandle}の最近の投稿を教えてください`,
+          content: `@${cleanHandle}の最近の投稿を教えてください。${this.countInstruction(count)}`,
         },
       ],
       tools: [tool],
     });
 
-    return { text: this.extractText(response) };
+    return { text: this.extractText(response), ...(count !== undefined && { requested_count: count }) };
   }
 
   async getTweet(url: string): Promise<SearchResult> {

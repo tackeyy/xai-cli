@@ -32,8 +32,31 @@ export interface TwitterTweet {
     reply_count?: number;
     like_count?: number;
     quote_count?: number;
+    bookmark_count?: number;
   };
+  organic_metrics?: {
+    impression_count?: number;
+  };
+  non_public_metrics?: {
+    impression_count?: number;
+  };
+  retweet_count?: number | null;
+  reply_count?: number | null;
+  quote_count?: number | null;
+  like_count?: number | null;
+  bookmark_count?: number | null;
+  view_count?: number | null;
+  engagement?: TwitterEngagementMetrics;
   [key: string]: unknown;
+}
+
+export interface TwitterEngagementMetrics {
+  retweet_count: number | null;
+  reply_count: number | null;
+  quote_count: number | null;
+  like_count: number | null;
+  bookmark_count: number | null;
+  view_count: number | null;
 }
 
 export interface TwitterIncludes {
@@ -55,6 +78,23 @@ export interface TwitterBookmarkResponse {
   data: TwitterTweet[];
   includes?: TwitterIncludes;
   meta: TwitterMeta;
+}
+
+export interface TwitterUserTimelineResponse {
+  data: TwitterTweet[];
+  includes?: TwitterIncludes;
+  meta: TwitterMeta & { requested_count?: number; partial?: boolean };
+}
+
+export interface TwitterUserProfile {
+  id: string;
+  username?: string;
+  name?: string;
+  description: string | null;
+  verified: boolean | null;
+  created_at: string | null;
+  followers_count: number | null;
+  following_count: number | null;
 }
 
 export interface TwitterBookmarkFolder {

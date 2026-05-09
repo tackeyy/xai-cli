@@ -26,4 +26,7 @@ export type {
   TwitterBookmarkResponse,
   TwitterBookmarkFolder,
   TwitterBookmarkFolderResponse,
+  TwitterEngagementMetrics,
+  TwitterUserProfile,
+  TwitterUserTimelineResponse,
 } from "./twitter-types.js";

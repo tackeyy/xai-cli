@@ -25,6 +25,24 @@ function createMockTwitterClient(): TwitterClient {
     getUserByUsername: vi.fn().mockResolvedValue({
       data: { id: "12345", username: "zeimu_ai", name: "Zeimu AI" },
     }),
+    getUserProfileByUsername: vi.fn().mockResolvedValue({
+      id: "12345",
+      username: "zeimu_ai",
+      name: "Zeimu AI",
+      description: "AI tax",
+      verified: true,
+      created_at: "2024-01-01T00:00:00.000Z",
+      followers_count: 100,
+      following_count: 50,
+    }),
+    getUserTimeline: vi.fn().mockResolvedValue({
+      data: [{ id: "t1", text: "hello", like_count: 1, retweet_count: null, reply_count: null, quote_count: null, bookmark_count: null, view_count: null }],
+      meta: { result_count: 1 },
+    }),
+    getUserTimelineCount: vi.fn().mockResolvedValue({
+      data: [{ id: "t1", text: "hello" }, { id: "t2", text: "world" }],
+      meta: { result_count: 2, requested_count: 2 },
+    }),
     getFollowing: vi.fn().mockResolvedValue({
       data: [
         { id: "100", username: "user1", name: "User One" },
@@ -171,6 +189,14 @@ describe("CLI commands", () => {
       await run(["--plain", "search", "AI"]);
       expect(logSpy).toHaveBeenCalledWith("search results");
     });
+
+    it("passes --count to client.search", async () => {
+      const { xaiClient } = await run(["search", "AI", "--count", "100"]);
+      expect(xaiClient.search).toHaveBeenCalledWith(
+        "AI",
+        expect.objectContaining({ count: 100 }),
+      );
+    });
   });
 
   describe("user", () => {
@@ -185,6 +211,45 @@ describe("CLI commands", () => {
         "elonmusk",
         expect.objectContaining({ fromDate: "2026-03-01" }),
       );
+    });
+
+    it("passes --count to client.getUser", async () => {
+      const { xaiClient } = await run(["user", "elonmusk", "--count", "10"]);
+      expect(xaiClient.getUser).toHaveBeenCalledWith(
+        "elonmusk",
+        expect.objectContaining({ count: 10 }),
+      );
+    });
+
+    it("adds profile fields in JSON output when X API lookup succeeds", async () => {
+      await run(["--json", "user", "zeimu_ai"]);
+      const parsed = JSON.parse(logSpy.mock.calls[0][0]);
+      expect(parsed.profile.followers_count).toBe(100);
+      expect(parsed.profile.following_count).toBe(50);
+      expect(parsed.profile.verified).toBe(true);
+    });
+  });
+
+  describe("timeline", () => {
+    it("resolves handle and calls getUserTimeline", async () => {
+      const { twitterClient } = await run(["timeline", "@zeimu_ai"]);
+      expect(twitterClient.getUserByUsername).toHaveBeenCalledWith("zeimu_ai", expect.objectContaining({ auth: "bearer" }));
+      expect(twitterClient.getUserTimeline).toHaveBeenCalledWith("12345", expect.any(Object));
+    });
+
+    it("passes --count to getUserTimelineCount", async () => {
+      const { twitterClient } = await run(["timeline", "12345", "--count", "2"]);
+      expect(twitterClient.getUserTimelineCount).toHaveBeenCalledWith(
+        "12345",
+        expect.objectContaining({ count: 2 }),
+      );
+    });
+
+    it("outputs normalized timeline JSON", async () => {
+      await run(["--json", "timeline", "12345"]);
+      const parsed = JSON.parse(logSpy.mock.calls[0][0]);
+      expect(parsed.data[0]).toHaveProperty("retweet_count");
+      expect(parsed.meta.result_count).toBe(1);
     });
   });
 

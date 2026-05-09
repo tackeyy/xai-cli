@@ -64,14 +64,45 @@ xai auth test
 xai search "M&A AI"
 xai search "M&A AI" --from 2026-03-01 --to 2026-03-22
 xai search "AI" --exclude spammer1,spammer2
+xai search "AI 会計" --count 100
 ```
+
+`--count N` は xAI `x_search` への取得目標件数としてプロンプトに反映します（上限 1000）。
 
 ### ユーザーの投稿取得
 
 ```bash
 xai user elonmusk
 xai user @elonmusk --from 2026-03-01
+xai user @elonmusk --count 100
+xai --json user @elonmusk
 ```
+
+`user` は X API Bearer Token (`X_BEARER_TOKEN`) が利用可能な場合、JSON 出力に `profile` を追加します。
+`profile` には `followers_count`, `following_count`, `verified`, `created_at`, `description` が含まれます。
+Bearer Token がない場合でも、従来どおり xAI `x_search` の投稿取得は継続します。
+
+### ユーザータイムライン取得（構造化）
+
+```bash
+# ハンドル指定
+xai timeline @elonmusk
+
+# ユーザーID指定
+xai timeline 2244994945
+
+# 複数ページをたどって最大100件取得
+xai timeline @elonmusk --count 100
+
+# フィールド指定
+xai timeline @elonmusk --tweet-fields created_at,author_id,public_metrics,organic_metrics
+
+# JSON 出力
+xai --json timeline @elonmusk --count 100
+```
+
+`timeline` は X API v2 `/2/users/:id/tweets` を使用します。`retweet_count`, `reply_count`, `quote_count`, `like_count`, `bookmark_count`, `view_count` は、取得できない場合も `null` として明示されます。
+`--count N` はページネーションで最大 N 件まで集約します（上限 1000）。API 側に追加ページがない場合は、取得できた範囲を `meta.partial=true` として返します。
 
 ### ツイートURL から内容取得
 

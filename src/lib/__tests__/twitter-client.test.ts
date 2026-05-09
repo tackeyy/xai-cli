@@ -291,14 +291,14 @@ describe("TwitterClient GET helper", () => {
     await expect(tc.getUserByUsername("test")).rejects.toThrow(/invalid JSON/);
   });
 
-  it("throws when bearer token is missing", () => {
+  it("throws when bearer token is missing", async () => {
     const tc = new TwitterClient({});
-    expect(() => tc.getUserByUsername("test")).rejects.toThrow(/X_BEARER_TOKEN/);
+    await expect(tc.getUserByUsername("test")).rejects.toThrow(/X_BEARER_TOKEN/);
   });
 
-  it("throws when oauth2 user token is missing", () => {
+  it("throws when oauth2 user token is missing", async () => {
     const tc = new TwitterClient({});
-    expect(() => tc.getAuthenticatedUser()).rejects.toThrow(/X_OAUTH2_USER_TOKEN/);
+    await expect(tc.getAuthenticatedUser()).rejects.toThrow(/X_OAUTH2_USER_TOKEN/);
   });
 
   it("includes retry-after in error message on 429", async () => {
@@ -335,6 +335,60 @@ describe("TwitterClient.getUserByUsername", () => {
     expect(result.data.id).toBe("123");
     const url = fetchSpy.mock.calls[0][0] as string;
     expect(url).toContain("/2/users/by/username/test");
+  });
+
+  it("getUserProfileByUsername requests public metrics and normalizes profile fields", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({
+        data: {
+          id: "123",
+          name: "Test",
+          username: "test",
+          description: "bio",
+          verified: true,
+          created_at: "2020-01-01T00:00:00.000Z",
+          public_metrics: {
+            followers_count: 0,
+            following_count: 42,
+            tweet_count: 100,
+            listed_count: 2,
+          },
+        },
+      }), { status: 200 }),
+    );
+
+    const tc = makeBearerClient();
+    const result = await tc.getUserProfileByUsername("test");
+
+    expect(result.followers_count).toBe(0);
+    expect(result.following_count).toBe(42);
+    expect(result.verified).toBe(true);
+    expect(result.created_at).toBe("2020-01-01T00:00:00.000Z");
+    expect(result.description).toBe("bio");
+    const url = fetchSpy.mock.calls[0][0] as string;
+    expect(url).toContain("user.fields=description%2Ccreated_at%2Cverified%2Cpublic_metrics");
+  });
+
+  it("getUserProfileByUsername converts null or invalid metrics to null", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({
+        data: {
+          id: "123",
+          username: "test",
+          public_metrics: {
+            followers_count: null,
+            following_count: "NaN",
+          },
+        },
+      }), { status: 200 }),
+    );
+
+    const tc = makeBearerClient();
+    const result = await tc.getUserProfileByUsername("test");
+
+    expect(result.followers_count).toBeNull();
+    expect(result.following_count).toBeNull();
+    expect(result.verified).toBeNull();
   });
 });
 
@@ -447,6 +501,110 @@ describe("TwitterClient.getAllFollowing", () => {
 
     expect(fetchSpy).toHaveBeenCalledTimes(2);
     expect(result.data).toHaveLength(2);
+  });
+});
+
+describe("TwitterClient.getUserTimeline", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    fetchSpy = vi.spyOn(global, "fetch");
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("normalizes all engagement fields when present", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({
+        data: [{
+          id: "t1",
+          text: "hello",
+          public_metrics: {
+            retweet_count: 1,
+            reply_count: 2,
+            like_count: 3,
+            quote_count: 4,
+            bookmark_count: 5,
+          },
+          organic_metrics: { impression_count: 6 },
+        }],
+        meta: { result_count: 1 },
+      }), { status: 200 }),
+    );
+
+    const tc = makeBearerClient();
+    const result = await tc.getUserTimeline("123");
+
+    expect(result.data[0]).toMatchObject({
+      retweet_count: 1,
+      reply_count: 2,
+      like_count: 3,
+      quote_count: 4,
+      bookmark_count: 5,
+      view_count: 6,
+    });
+  });
+
+  it("sets missing engagement fields to null", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({
+        data: [{ id: "t1", text: "old tweet", public_metrics: { like_count: 3 } }],
+        meta: { result_count: 1 },
+      }), { status: 200 }),
+    );
+
+    const tc = makeBearerClient();
+    const result = await tc.getUserTimeline("123");
+
+    expect(result.data[0]).toMatchObject({
+      retweet_count: null,
+      reply_count: null,
+      quote_count: null,
+      like_count: 3,
+      bookmark_count: null,
+      view_count: null,
+    });
+  });
+
+  it("getUserTimelineCount follows pagination and truncates to requested count", async () => {
+    fetchSpy
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({
+          data: [{ id: "t1" }, { id: "t2" }],
+          meta: { result_count: 2, next_token: "next" },
+        }), { status: 200 }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({
+          data: [{ id: "t3" }, { id: "t4" }],
+          meta: { result_count: 2 },
+        }), { status: 200 }),
+      );
+
+    const tc = makeBearerClient();
+    const result = await tc.getUserTimelineCount("123", { count: 3, maxResults: 2 });
+
+    expect(result.data.map((t) => t.id)).toEqual(["t1", "t2", "t3"]);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(result.meta.result_count).toBe(3);
+  });
+
+  it("getUserTimelineCount marks partial when API has fewer tweets than requested", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({
+        data: [{ id: "t1" }],
+        meta: { result_count: 1 },
+      }), { status: 200 }),
+    );
+
+    const tc = makeBearerClient();
+    const result = await tc.getUserTimelineCount("123", { count: 100, maxResults: 100 });
+
+    expect(result.data.map((t) => t.id)).toEqual(["t1"]);
+    expect(result.meta.requested_count).toBe(100);
+    expect(result.meta.partial).toBe(true);
   });
 });
 

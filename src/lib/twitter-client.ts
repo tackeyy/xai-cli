@@ -2,6 +2,7 @@ import { createHmac } from "node:crypto";
 import { computeTweetLength, TWEET_MAX_LENGTH } from "./tweet-length.js";
 import type {
   TwitterAuthMode,
+  TwitterEngagementMetrics,
   TwitterUserLookupResponse,
   TwitterFollowingResponse,
   TwitterBookmarkResponse,
@@ -9,6 +10,8 @@ import type {
   TwitterIncludes,
   TwitterTweet,
   TwitterUser,
+  TwitterUserProfile,
+  TwitterUserTimelineResponse,
 } from "./twitter-types.js";
 
 export interface TwitterClientOptions {
@@ -61,6 +64,18 @@ interface GetRequestOptions {
   auth: TwitterAuthMode;
   query?: Record<string, string | number | boolean | undefined>;
 }
+
+const DEFAULT_TIMELINE_TWEET_FIELDS = [
+  "id",
+  "text",
+  "created_at",
+  "author_id",
+  "public_metrics",
+  "organic_metrics",
+  "non_public_metrics",
+];
+const DEFAULT_USER_PROFILE_FIELDS = ["description", "created_at", "verified", "public_metrics"];
+const MAX_COUNT = 1000;
 
 export class TwitterClient {
   private readonly apiKey?: string;
@@ -240,6 +255,30 @@ export class TwitterClient {
     );
   }
 
+  async getUserProfileByUsername(
+    username: string,
+    opts?: {
+      auth?: TwitterAuthMode;
+    },
+  ): Promise<TwitterUserProfile> {
+    const response = await this.getUserByUsername(username, {
+      auth: opts?.auth ?? "bearer",
+      userFields: DEFAULT_USER_PROFILE_FIELDS,
+    });
+    const user = response.data;
+    const metrics = user.public_metrics ?? {};
+    return {
+      id: user.id,
+      username: user.username,
+      name: user.name,
+      description: typeof user.description === "string" ? user.description : null,
+      verified: typeof user.verified === "boolean" ? user.verified : null,
+      created_at: typeof user["created_at"] === "string" ? user["created_at"] : null,
+      followers_count: this.metricOrNull(metrics.followers_count),
+      following_count: this.metricOrNull(metrics.following_count),
+    };
+  }
+
   async getAuthenticatedUser(opts?: {
     userFields?: string[];
   }): Promise<TwitterUserLookupResponse> {
@@ -276,6 +315,83 @@ export class TwitterClient {
       `/2/users/${encodeURIComponent(userId)}/following`,
       { auth: opts?.auth ?? "bearer", query },
     );
+  }
+
+  // --- User timeline ---
+
+  async getUserTimeline(
+    userId: string,
+    opts?: {
+      tweetFields?: string[];
+      expansions?: string[];
+      userFields?: string[];
+      mediaFields?: string[];
+      maxResults?: number;
+      paginationToken?: string;
+      auth?: "bearer" | "oauth1";
+    },
+  ): Promise<TwitterUserTimelineResponse> {
+    const query: Record<string, string | number | undefined> = {};
+    const tweetFields = opts?.tweetFields ?? DEFAULT_TIMELINE_TWEET_FIELDS;
+    if (tweetFields.length) query["tweet.fields"] = tweetFields.join(",");
+    if (opts?.expansions?.length) query.expansions = opts.expansions.join(",");
+    if (opts?.userFields?.length) query["user.fields"] = opts.userFields.join(",");
+    if (opts?.mediaFields?.length) query["media.fields"] = opts.mediaFields.join(",");
+    if (opts?.maxResults) query.max_results = opts.maxResults;
+    if (opts?.paginationToken) query.pagination_token = opts.paginationToken;
+
+    const response = await this.get<TwitterUserTimelineResponse>(
+      `/2/users/${encodeURIComponent(userId)}/tweets`,
+      { auth: opts?.auth ?? "bearer", query },
+    );
+
+    return this.normalizeTweetResponse(response);
+  }
+
+  async getUserTimelineCount(
+    userId: string,
+    opts: {
+      count: number;
+      tweetFields?: string[];
+      expansions?: string[];
+      userFields?: string[];
+      mediaFields?: string[];
+      maxResults?: number;
+      auth?: "bearer" | "oauth1";
+    },
+  ): Promise<TwitterUserTimelineResponse> {
+    this.validateCount(opts.count);
+    const allData: TwitterTweet[] = [];
+    let includes: TwitterIncludes = {};
+    let paginationToken: string | undefined;
+    let partial = false;
+
+    do {
+      const remaining = opts.count - allData.length;
+      const pageSize = Math.min(opts.maxResults ?? 100, remaining);
+      const res = await this.getUserTimeline(userId, {
+        ...opts,
+        maxResults: pageSize,
+        paginationToken,
+      });
+
+      if (res.data) allData.push(...res.data);
+      includes = this.mergeIncludes(includes, res.includes);
+      paginationToken = res.meta?.next_token;
+    } while (paginationToken && allData.length < opts.count);
+
+    if (paginationToken && allData.length >= opts.count) {
+      partial = false;
+    } else if (!paginationToken && allData.length < opts.count) {
+      partial = true;
+    }
+
+    const data = allData.slice(0, opts.count);
+    return {
+      data,
+      includes: Object.keys(includes).length > 0 ? includes : undefined,
+      meta: { result_count: data.length, requested_count: opts.count, partial },
+    };
   }
 
   async getAllFollowing(
@@ -335,10 +451,11 @@ export class TwitterClient {
     if (opts?.maxResults) query.max_results = opts.maxResults;
     if (opts?.paginationToken) query.pagination_token = opts.paginationToken;
 
-    return this.get<TwitterBookmarkResponse>(
+    const response = await this.get<TwitterBookmarkResponse>(
       `/2/users/${encodeURIComponent(userId)}/bookmarks`,
       { auth: "oauth2-user", query },
     );
+    return this.normalizeTweetResponse(response);
   }
 
   async getAllBookmarks(
@@ -370,11 +487,11 @@ export class TwitterClient {
       pages++;
     } while (paginationToken && pages < maxPages);
 
-    return {
+    return this.normalizeTweetResponse({
       data: allData,
       includes: Object.keys(includes).length > 0 ? includes : undefined,
       meta: { result_count: allData.length },
-    };
+    });
   }
 
   async getBookmarkFolders(
@@ -443,10 +560,11 @@ export class TwitterClient {
     if (opts?.maxResults) query.max_results = opts.maxResults;
     if (opts?.paginationToken) query.pagination_token = opts.paginationToken;
 
-    return this.get<TwitterBookmarkResponse>(
+    const response = await this.get<TwitterBookmarkResponse>(
       `/2/users/${encodeURIComponent(userId)}/bookmarks/folders/${encodeURIComponent(folderId)}`,
       { auth: "oauth2-user", query },
     );
+    return this.normalizeTweetResponse(response);
   }
 
   async getAllBookmarksByFolder(
@@ -479,11 +597,11 @@ export class TwitterClient {
       pages++;
     } while (paginationToken && pages < maxPages);
 
-    return {
+    return this.normalizeTweetResponse({
       data: allData,
       includes: Object.keys(includes).length > 0 ? includes : undefined,
       meta: { result_count: allData.length },
-    };
+    });
   }
 
   // --- Bookmark filtering ---
@@ -664,5 +782,47 @@ export class TwitterClient {
     }
 
     return result;
+  }
+
+  private validateCount(count: number): void {
+    if (!Number.isInteger(count) || count <= 0 || count > MAX_COUNT) {
+      throw new Error(`count must be between 1 and ${MAX_COUNT}`);
+    }
+  }
+
+  private metricOrNull(value: unknown): number | null {
+    return typeof value === "number" && Number.isFinite(value) ? value : null;
+  }
+
+  private normalizeEngagement(tweet: TwitterTweet): TwitterEngagementMetrics {
+    const publicMetrics = tweet.public_metrics ?? {};
+    const organicMetrics = tweet.organic_metrics ?? {};
+    const nonPublicMetrics = tweet.non_public_metrics ?? {};
+    return {
+      retweet_count: this.metricOrNull(publicMetrics.retweet_count),
+      reply_count: this.metricOrNull(publicMetrics.reply_count),
+      quote_count: this.metricOrNull(publicMetrics.quote_count),
+      like_count: this.metricOrNull(publicMetrics.like_count),
+      bookmark_count: this.metricOrNull(publicMetrics.bookmark_count),
+      view_count: this.metricOrNull(organicMetrics.impression_count ?? nonPublicMetrics.impression_count ?? tweet["view_count"]),
+    };
+  }
+
+  private normalizeTweet(tweet: TwitterTweet): TwitterTweet {
+    const engagement = this.normalizeEngagement(tweet);
+    return {
+      ...tweet,
+      ...engagement,
+      engagement,
+    };
+  }
+
+  private normalizeTweetResponse<T extends { data: TwitterTweet[]; includes?: TwitterIncludes; meta: TwitterUserTimelineResponse["meta"] }>(
+    response: T,
+  ): T {
+    return {
+      ...response,
+      data: (response.data ?? []).map((tweet) => this.normalizeTweet(tweet)),
+    };
   }
 }
