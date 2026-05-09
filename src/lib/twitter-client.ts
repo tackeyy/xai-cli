@@ -362,6 +362,7 @@ export class TwitterClient {
   ): Promise<TwitterUserTimelineResponse> {
     this.validateCount(opts.count);
     const allData: TwitterTweet[] = [];
+    const seenTweetIds = new Set<string>();
     let includes: TwitterIncludes = {};
     let paginationToken: string | undefined;
     let partial = false;
@@ -375,7 +376,12 @@ export class TwitterClient {
         paginationToken,
       });
 
-      if (res.data) allData.push(...res.data);
+      for (const tweet of res.data ?? []) {
+        if (seenTweetIds.has(tweet.id)) continue;
+        seenTweetIds.add(tweet.id);
+        allData.push(tweet);
+        if (allData.length >= opts.count) break;
+      }
       includes = this.mergeIncludes(includes, res.includes);
       paginationToken = res.meta?.next_token;
     } while (paginationToken && allData.length < opts.count);

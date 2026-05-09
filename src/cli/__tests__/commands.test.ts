@@ -197,6 +197,22 @@ describe("CLI commands", () => {
         expect.objectContaining({ count: 100 }),
       );
     });
+
+    it.each([1, 999, 1000])("accepts --count boundary value %i", async (count) => {
+      const { xaiClient } = await run(["search", "AI", "--count", String(count)]);
+      expect(xaiClient.search).toHaveBeenCalledWith(
+        "AI",
+        expect.objectContaining({ count }),
+      );
+    });
+
+    it.each(["0", "-1"])("rejects invalid --count value %s", async (count) => {
+      const xaiClient = createMockClient();
+      await expect(run(["search", "AI", "--count", count], xaiClient)).rejects.toThrow(
+        "must be a positive integer",
+      );
+      expect(xaiClient.search).not.toHaveBeenCalled();
+    });
   });
 
   describe("user", () => {
@@ -219,6 +235,22 @@ describe("CLI commands", () => {
         "elonmusk",
         expect.objectContaining({ count: 10 }),
       );
+    });
+
+    it.each([1, 999, 1000])("accepts user --count boundary value %i", async (count) => {
+      const { xaiClient } = await run(["user", "elonmusk", "--count", String(count)]);
+      expect(xaiClient.getUser).toHaveBeenCalledWith(
+        "elonmusk",
+        expect.objectContaining({ count }),
+      );
+    });
+
+    it.each(["0", "-1"])("rejects invalid user --count value %s", async (count) => {
+      const xaiClient = createMockClient();
+      await expect(run(["user", "elonmusk", "--count", count], xaiClient)).rejects.toThrow(
+        "must be a positive integer",
+      );
+      expect(xaiClient.getUser).not.toHaveBeenCalled();
     });
 
     it("adds profile fields in JSON output when X API lookup succeeds", async () => {
