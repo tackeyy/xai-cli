@@ -1029,3 +1029,254 @@ describe("TwitterClient.filterBookmarks", () => {
     expect(result.meta.result_count).toBe(0);
   });
 });
+
+describe("TwitterClient.getTweetById", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    fetchSpy = vi.spyOn(global, "fetch");
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("calls GET /2/tweets/:id with default tweet.fields and expansions", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: {
+            id: "111",
+            text: "hello",
+            conversation_id: "111",
+            referenced_tweets: [{ type: "replied_to", id: "999" }],
+          },
+        }),
+        { status: 200 },
+      ),
+    );
+
+    const tc = makeBearerClient();
+    const result = await tc.getTweetById("111");
+
+    expect(result.data.id).toBe("111");
+    expect(result.data.conversation_id).toBe("111");
+    expect(result.data.referenced_tweets?.[0].id).toBe("999");
+
+    const url = String(fetchSpy.mock.calls[0][0]);
+    expect(url).toContain("/2/tweets/111");
+    expect(url).toContain("tweet.fields=");
+    expect(url).toContain("conversation_id");
+    expect(url).toContain("referenced_tweets");
+    expect(url).toContain("expansions=");
+  });
+
+  it("respects custom tweetFields and expansions", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ data: { id: "1" } }), { status: 200 }),
+    );
+
+    const tc = makeBearerClient();
+    await tc.getTweetById("1", {
+      tweetFields: ["id", "text"],
+      expansions: ["author_id"],
+    });
+
+    const url = String(fetchSpy.mock.calls[0][0]);
+    expect(url).toContain("tweet.fields=id%2Ctext");
+    expect(url).toContain("expansions=author_id");
+  });
+
+  it("includes referenced tweets and users in includes", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: { id: "111", text: "reply" },
+          includes: {
+            tweets: [{ id: "999", text: "parent" }],
+            users: [{ id: "u1", username: "alice" }],
+          },
+        }),
+        { status: 200 },
+      ),
+    );
+
+    const tc = makeBearerClient();
+    const result = await tc.getTweetById("111");
+    expect(result.includes?.tweets?.[0].id).toBe("999");
+    expect(result.includes?.users?.[0].username).toBe("alice");
+  });
+
+  it("throws for non-numeric tweet id", async () => {
+    const tc = makeBearerClient();
+    await expect(tc.getTweetById("not-a-number")).rejects.toThrow(/tweet id/i);
+  });
+
+  it("supports oauth1 auth mode", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ data: { id: "1" } }), { status: 200 }),
+    );
+    const tc = makeClient();
+    await tc.getTweetById("1", { auth: "oauth1" });
+    const call = fetchSpy.mock.calls[0];
+    const headers = call[1]?.headers as Record<string, string>;
+    expect(headers.Authorization).toMatch(/^OAuth /);
+  });
+});
+
+describe("TwitterClient.searchRecent", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    fetchSpy = vi.spyOn(global, "fetch");
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("calls GET /2/tweets/search/recent with query", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: [{ id: "1", text: "match" }],
+          meta: { result_count: 1, newest_id: "1", oldest_id: "1" },
+        }),
+        { status: 200 },
+      ),
+    );
+
+    const tc = makeBearerClient();
+    const result = await tc.searchRecent("conversation_id:123");
+
+    expect(result.data?.[0].id).toBe("1");
+    expect(result.meta.result_count).toBe(1);
+
+    const url = String(fetchSpy.mock.calls[0][0]);
+    expect(url).toContain("/2/tweets/search/recent");
+    expect(url).toContain("query=conversation_id%3A123");
+  });
+
+  it("rejects empty query", async () => {
+    const tc = makeBearerClient();
+    await expect(tc.searchRecent("")).rejects.toThrow(/query/i);
+  });
+
+  it("passes maxResults, paginationToken, startTime", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ data: [], meta: { result_count: 0 } }), { status: 200 }),
+    );
+    const tc = makeBearerClient();
+    await tc.searchRecent("hello", {
+      maxResults: 50,
+      paginationToken: "abc",
+      startTime: "2026-01-01T00:00:00Z",
+    });
+    const url = String(fetchSpy.mock.calls[0][0]);
+    expect(url).toContain("max_results=50");
+    expect(url).toContain("next_token=abc");
+    expect(url).toContain("start_time=2026-01-01T00%3A00%3A00Z");
+  });
+});
+
+describe("TwitterClient.getConversation", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    fetchSpy = vi.spyOn(global, "fetch");
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("fetches root tweet then searches by conversation_id", async () => {
+    fetchSpy
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            data: {
+              id: "555",
+              text: "reply in thread",
+              conversation_id: "100",
+              created_at: "2026-05-25T10:01:00Z",
+            },
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            data: [
+              { id: "555", text: "reply in thread", created_at: "2026-05-25T10:01:00Z" },
+              { id: "100", text: "root", created_at: "2026-05-25T10:00:00Z" },
+            ],
+            meta: { result_count: 2, newest_id: "555", oldest_id: "100" },
+          }),
+          { status: 200 },
+        ),
+      );
+
+    const tc = makeBearerClient();
+    const result = await tc.getConversation("555");
+
+    expect(result.conversation_id).toBe("100");
+    expect(result.tweets).toHaveLength(2);
+    expect(result.tweets[0].id).toBe("100");
+    expect(result.tweets[1].id).toBe("555");
+    expect(result.root?.id).toBe("100");
+
+    const searchUrl = String(fetchSpy.mock.calls[1][0]);
+    expect(searchUrl).toContain("query=conversation_id%3A100");
+  });
+
+  it("accepts a tweet URL", async () => {
+    fetchSpy
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            data: {
+              id: "777",
+              conversation_id: "777",
+              text: "solo",
+              created_at: "2026-05-25T10:00:00Z",
+            },
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            data: [{ id: "777", text: "solo", created_at: "2026-05-25T10:00:00Z" }],
+            meta: { result_count: 1 },
+          }),
+          { status: 200 },
+        ),
+      );
+    const tc = makeBearerClient();
+    const result = await tc.getConversation("https://x.com/foo/status/777");
+    expect(result.conversation_id).toBe("777");
+    expect(result.tweets).toHaveLength(1);
+  });
+
+  it("returns partial=false and meta.result_count", async () => {
+    fetchSpy
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            data: { id: "1", conversation_id: "1", created_at: "2026-05-25T10:00:00Z" },
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            data: [{ id: "1", created_at: "2026-05-25T10:00:00Z" }],
+            meta: { result_count: 1 },
+          }),
+          { status: 200 },
+        ),
+      );
+    const tc = makeBearerClient();
+    const result = await tc.getConversation("1");
+    expect(result.meta.partial).toBe(false);
+    expect(result.meta.result_count).toBe(1);
+  });
+});

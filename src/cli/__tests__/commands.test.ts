@@ -106,6 +106,29 @@ function createMockTwitterClient(): TwitterClient {
       data: [{ id: "t1", text: "matched", author_id: "a1" }],
       meta: { result_count: 1 },
     }),
+    getTweetById: vi.fn().mockResolvedValue({
+      data: {
+        id: "999",
+        text: "hello world",
+        conversation_id: "100",
+        referenced_tweets: [{ type: "replied_to", id: "100" }],
+        created_at: "2026-05-25T10:01:00Z",
+      },
+      includes: { tweets: [{ id: "100", text: "root" }] },
+    }),
+    searchRecent: vi.fn().mockResolvedValue({
+      data: [{ id: "100", text: "root" }, { id: "999", text: "hello world" }],
+      meta: { result_count: 2 },
+    }),
+    getConversation: vi.fn().mockResolvedValue({
+      conversation_id: "100",
+      root: { id: "100", text: "root", created_at: "2026-05-25T10:00:00Z" },
+      tweets: [
+        { id: "100", text: "root", created_at: "2026-05-25T10:00:00Z" },
+        { id: "999", text: "hello world", created_at: "2026-05-25T10:01:00Z" },
+      ],
+      meta: { result_count: 2, partial: false },
+    }),
   };
   return mock as TwitterClient;
 }
@@ -344,10 +367,94 @@ describe("CLI commands", () => {
   });
 
   describe("tweet", () => {
-    it("should call client.getTweet with URL", async () => {
+    it("should call client.getTweet with URL (default LLM path)", async () => {
       const url = "https://x.com/elonmusk/status/123";
-      const { xaiClient } = await run(["tweet", url]);
+      const { xaiClient, twitterClient } = await run(["tweet", url]);
       expect(xaiClient.getTweet).toHaveBeenCalledWith(url);
+      expect(twitterClient.getTweetById).not.toHaveBeenCalled();
+    });
+
+    it("should call twitterClient.getTweetById with --raw", async () => {
+      const url = "https://x.com/elonmusk/status/123";
+      const { xaiClient, twitterClient } = await run(["tweet", url, "--raw"]);
+      expect(twitterClient.getTweetById).toHaveBeenCalledWith(
+        url,
+        expect.objectContaining({ auth: "bearer" }),
+      );
+      expect(xaiClient.getTweet).not.toHaveBeenCalled();
+    });
+
+    it("should pass --tweet-fields and --expansions in --raw mode", async () => {
+      const { twitterClient } = await run([
+        "tweet",
+        "123",
+        "--raw",
+        "--tweet-fields",
+        "id,text",
+        "--expansions",
+        "author_id",
+      ]);
+      expect(twitterClient.getTweetById).toHaveBeenCalledWith(
+        "123",
+        expect.objectContaining({
+          tweetFields: ["id", "text"],
+          expansions: ["author_id"],
+        }),
+      );
+    });
+
+    it("--raw --json outputs structured response", async () => {
+      await run(["--json", "tweet", "123", "--raw"]);
+      const parsed = JSON.parse(logSpy.mock.calls[0][0] as string);
+      expect(parsed.data.id).toBe("999");
+      expect(parsed.data.conversation_id).toBe("100");
+    });
+  });
+
+  describe("thread", () => {
+    it("should call getConversation with the id", async () => {
+      const { twitterClient } = await run(["thread", "100"]);
+      expect(twitterClient.getConversation).toHaveBeenCalledWith(
+        "100",
+        expect.objectContaining({ auth: "bearer" }),
+      );
+    });
+
+    it("accepts URL form", async () => {
+      const url = "https://x.com/foo/status/777";
+      const { twitterClient } = await run(["thread", url]);
+      expect(twitterClient.getConversation).toHaveBeenCalledWith(
+        url,
+        expect.any(Object),
+      );
+    });
+
+    it("passes --all and --max-results", async () => {
+      const { twitterClient } = await run([
+        "thread",
+        "100",
+        "--all",
+        "--max-results",
+        "50",
+      ]);
+      expect(twitterClient.getConversation).toHaveBeenCalledWith(
+        "100",
+        expect.objectContaining({ all: true, maxResults: 50 }),
+      );
+    });
+
+    it("--json outputs full conversation", async () => {
+      await run(["--json", "thread", "100"]);
+      const parsed = JSON.parse(logSpy.mock.calls[0][0] as string);
+      expect(parsed.conversation_id).toBe("100");
+      expect(parsed.tweets).toHaveLength(2);
+      expect(parsed.meta.partial).toBe(false);
+    });
+
+    it("rejects out-of-range --max-results", async () => {
+      await expect(
+        run(["thread", "100", "--max-results", "5"]),
+      ).rejects.toThrow(/max-results/i);
     });
   });
 
