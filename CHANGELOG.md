@@ -7,6 +7,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- **`xai tweet <url> --raw` モード** (Issue #13): X API v2 `GET /2/tweets/:id` を直叩きし、`referenced_tweets` / `conversation_id` / `in_reply_to_user_id` 等の構造化メタデータを取得。
+  - `--tweet-fields`, `--expansions`, `--user-fields`, `--media-fields` でレスポンスフィールド制御
+  - `--auth bearer|oauth1` で認証方式選択 (既定 bearer)
+  - `--raw` 指定なしは従来の xAI LLM 経由を維持（後方互換）
+- **`xai thread <idOrUrl>` コマンド** (Issue #13): tweet ID または URL から会話全体を `conversation_id` 単位で時系列取得。
+  - 内部で `GET /2/tweets/:id` (親取得) + `GET /2/tweets/search/recent?query=conversation_id:XXX`
+  - `--all` で全ページネーション (上限 50 ページ)、`--max-results` で 1 ページ件数 (10-100)
+  - 結果は `created_at` 昇順、`root` フィールドに親 tweet
+- `TwitterClient` API: `getTweetById(idOrUrl, opts)`, `searchRecent(query, opts)`, `getConversation(idOrUrl, opts)` を追加。
+- `TwitterTweet` 型に `conversation_id`, `in_reply_to_user_id`, `referenced_tweets` フィールドを追加。
 - **`xai following <user>` コマンド**: 指定ユーザーのフォロー一覧を取得。
   - `@handle` / `handle` / numeric user ID 指定に対応
   - `--user-fields`, `--expansions`, `--tweet-fields` でレスポンスフィールドを制御

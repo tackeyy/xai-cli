@@ -24,11 +24,19 @@ export interface TwitterUser {
   [key: string]: unknown;
 }
 
+export interface TwitterReferencedTweet {
+  type: "replied_to" | "quoted" | "retweeted";
+  id: string;
+}
+
 export interface TwitterTweet {
   id: string;
   text?: string;
   author_id?: string;
   created_at?: string;
+  conversation_id?: string;
+  in_reply_to_user_id?: string;
+  referenced_tweets?: TwitterReferencedTweet[];
   public_metrics?: {
     retweet_count?: number;
     reply_count?: number;
@@ -123,3 +131,25 @@ export interface TwitterBookmarkFolderResponse {
 }
 
 export type TwitterAuthMode = "oauth1" | "bearer" | "oauth2-user";
+
+export interface TwitterTweetLookupResponse {
+  data: TwitterTweet;
+  includes?: TwitterIncludes;
+}
+
+export interface TwitterSearchRecentResponse {
+  data?: TwitterTweet[];
+  includes?: TwitterIncludes;
+  meta: TwitterMeta & { newest_id?: string; oldest_id?: string };
+}
+
+export interface TwitterConversationResponse {
+  conversation_id: string;
+  root: TwitterTweet | null;
+  tweets: TwitterTweet[];
+  includes?: TwitterIncludes;
+  meta: {
+    result_count: number;
+    partial: boolean;
+  };
+}

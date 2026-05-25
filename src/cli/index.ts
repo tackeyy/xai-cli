@@ -317,23 +317,120 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
   // --- tweet ---
   program
     .command("tweet <url>")
-    .description("Get tweet content from URL")
-    .action(async (url) => {
-      try {
-        const client = getClient();
-        const mode = getOutputMode();
-        const result = await client.getTweet(url);
+    .description("Get tweet content from URL (LLM-text by default; --raw for X API v2 structured data)")
+    .option("--raw", "Fetch via X API v2 GET /2/tweets/:id (structured JSON)")
+    .option("--tweet-fields <csv>", "Tweet fields (--raw only)", parseCsv)
+    .option("--expansions <csv>", "Expansions (--raw only)", parseCsv)
+    .option("--user-fields <csv>", "User fields for expansions (--raw only)", parseCsv)
+    .option("--media-fields <csv>", "Media fields (--raw only)", parseCsv)
+    .option("--auth <mode>", "Auth mode for --raw: bearer | oauth1", "bearer")
+    .action(
+      async (
+        url: string,
+        opts: {
+          raw?: boolean;
+          tweetFields?: string[];
+          expansions?: string[];
+          userFields?: string[];
+          mediaFields?: string[];
+          auth?: string;
+        },
+      ) => {
+        try {
+          const mode = getOutputMode();
+          if (opts.raw) {
+            const auth = (opts.auth ?? "bearer") as "bearer" | "oauth1";
+            const tc = getTwitterClient();
+            const result = await tc.getTweetById(url, {
+              tweetFields: opts.tweetFields,
+              expansions: opts.expansions,
+              userFields: opts.userFields,
+              mediaFields: opts.mediaFields,
+              auth,
+            });
+            if (mode === "json") {
+              jsonOutput(result);
+            } else {
+              console.log(JSON.stringify(result.data, null, 2));
+            }
+            return;
+          }
 
-        if (mode === "json") {
-          jsonOutput(result);
-        } else {
-          console.log(result.text);
+          const client = getClient();
+          const result = await client.getTweet(url);
+          if (mode === "json") {
+            jsonOutput(result);
+          } else {
+            console.log(result.text);
+          }
+        } catch (err: any) {
+          console.error(`Error: ${err.message}`);
+          process.exit(1);
         }
-      } catch (err: any) {
-        console.error(`Error: ${err.message}`);
-        process.exit(1);
+      },
+    );
+
+  // --- thread (Issue #13: R2) ---
+  program
+    .command("thread <idOrUrl>")
+    .description("Fetch entire conversation by tweet id or URL (X API v2 search/recent + tweets/:id)")
+    .option("--max-results <n>", "Max results per page (10-100)", (v) => {
+      const n = Number(v);
+      if (!Number.isInteger(n) || n < 10 || n > 100) {
+        throw new Error("--max-results must be an integer between 10 and 100");
       }
-    });
+      return n;
+    })
+    .option("--all", "Paginate through all pages (capped at 50)", false)
+    .option("--tweet-fields <csv>", "Tweet fields", parseCsv)
+    .option("--expansions <csv>", "Expansions", parseCsv)
+    .option("--user-fields <csv>", "User fields for expansions", parseCsv)
+    .option("--media-fields <csv>", "Media fields", parseCsv)
+    .option("--auth <mode>", "Auth mode: bearer | oauth1", "bearer")
+    .action(
+      async (
+        idOrUrl: string,
+        opts: {
+          maxResults?: number;
+          all?: boolean;
+          tweetFields?: string[];
+          expansions?: string[];
+          userFields?: string[];
+          mediaFields?: string[];
+          auth?: string;
+        },
+      ) => {
+        try {
+          const mode = getOutputMode();
+          const auth = (opts.auth ?? "bearer") as "bearer" | "oauth1";
+          const tc = getTwitterClient();
+          const result = await tc.getConversation(idOrUrl, {
+            all: opts.all,
+            maxResults: opts.maxResults,
+            tweetFields: opts.tweetFields,
+            expansions: opts.expansions,
+            userFields: opts.userFields,
+            mediaFields: opts.mediaFields,
+            auth,
+          });
+          if (mode === "json") {
+            jsonOutput(result);
+          } else {
+            console.log(
+              `Conversation ${result.conversation_id}: ${result.meta.result_count} tweets` +
+                (result.meta.partial ? " (partial)" : ""),
+            );
+            for (const t of result.tweets) {
+              console.log(`\n[${t.created_at ?? "?"}] @${t.author_id ?? "?"} (${t.id})`);
+              console.log(t.text ?? "");
+            }
+          }
+        } catch (err: any) {
+          console.error(`Error: ${err.message}`);
+          process.exit(1);
+        }
+      },
+    );
 
   // --- ask ---
   program

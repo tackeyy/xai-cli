@@ -4,7 +4,10 @@ import type {
   DmAvailability,
   DmCheckResult,
   TwitterAuthMode,
+  TwitterConversationResponse,
   TwitterEngagementMetrics,
+  TwitterSearchRecentResponse,
+  TwitterTweetLookupResponse,
   TwitterUserLookupResponse,
   TwitterFollowingResponse,
   TwitterBookmarkResponse,
@@ -78,7 +81,26 @@ const DEFAULT_TIMELINE_TWEET_FIELDS = [
 ];
 const DEFAULT_USER_PROFILE_FIELDS = ["description", "created_at", "verified", "public_metrics"];
 const DM_STATUS_USER_FIELDS = ["receives_your_dm", "connection_status", "protected", "verified"];
+const DEFAULT_TWEET_LOOKUP_FIELDS = [
+  "id",
+  "text",
+  "created_at",
+  "author_id",
+  "conversation_id",
+  "in_reply_to_user_id",
+  "referenced_tweets",
+  "public_metrics",
+];
+const DEFAULT_TWEET_LOOKUP_EXPANSIONS = [
+  "author_id",
+  "referenced_tweets.id",
+  "referenced_tweets.id.author_id",
+  "in_reply_to_user_id",
+];
+const TWEET_ID_RE = /^\d{1,25}$/;
+const TWEET_URL_RE = /(?:x|twitter)\.com\/(?:[^/]+\/status|i\/status|i\/web\/status)\/(\d{1,25})/i;
 const MAX_COUNT = 1000;
+const CONVERSATION_MAX_PAGES = 50;
 
 export class TwitterClient {
   private readonly apiKey?: string;
@@ -645,6 +667,160 @@ export class TwitterClient {
   }
 
   // --- Bookmark filtering ---
+
+  // --- Tweet lookup & conversation (Issue #13: R1 + R2) ---
+
+  async getTweetById(
+    tweetIdOrUrl: string,
+    opts?: {
+      tweetFields?: string[];
+      expansions?: string[];
+      userFields?: string[];
+      mediaFields?: string[];
+      auth?: "bearer" | "oauth1";
+    },
+  ): Promise<TwitterTweetLookupResponse> {
+    const tweetId = this.normalizeTweetId(tweetIdOrUrl);
+    const query: Record<string, string | undefined> = {};
+    const tweetFields = opts?.tweetFields ?? DEFAULT_TWEET_LOOKUP_FIELDS;
+    const expansions = opts?.expansions ?? DEFAULT_TWEET_LOOKUP_EXPANSIONS;
+    if (tweetFields.length) query["tweet.fields"] = tweetFields.join(",");
+    if (expansions.length) query.expansions = expansions.join(",");
+    if (opts?.userFields?.length) query["user.fields"] = opts.userFields.join(",");
+    if (opts?.mediaFields?.length) query["media.fields"] = opts.mediaFields.join(",");
+
+    return this.get<TwitterTweetLookupResponse>(
+      `/2/tweets/${encodeURIComponent(tweetId)}`,
+      { auth: opts?.auth ?? "bearer", query },
+    );
+  }
+
+  async searchRecent(
+    query: string,
+    opts?: {
+      maxResults?: number;
+      tweetFields?: string[];
+      expansions?: string[];
+      userFields?: string[];
+      mediaFields?: string[];
+      paginationToken?: string;
+      startTime?: string;
+      endTime?: string;
+      sinceId?: string;
+      untilId?: string;
+      auth?: "bearer" | "oauth1";
+    },
+  ): Promise<TwitterSearchRecentResponse> {
+    if (!query || !query.trim()) {
+      throw new Error("searchRecent: query must not be empty");
+    }
+    const params: Record<string, string | number | undefined> = { query };
+    if (opts?.tweetFields?.length) params["tweet.fields"] = opts.tweetFields.join(",");
+    if (opts?.expansions?.length) params.expansions = opts.expansions.join(",");
+    if (opts?.userFields?.length) params["user.fields"] = opts.userFields.join(",");
+    if (opts?.mediaFields?.length) params["media.fields"] = opts.mediaFields.join(",");
+    if (opts?.maxResults) params.max_results = opts.maxResults;
+    if (opts?.paginationToken) params.next_token = opts.paginationToken;
+    if (opts?.startTime) params.start_time = opts.startTime;
+    if (opts?.endTime) params.end_time = opts.endTime;
+    if (opts?.sinceId) params.since_id = opts.sinceId;
+    if (opts?.untilId) params.until_id = opts.untilId;
+
+    return this.get<TwitterSearchRecentResponse>(`/2/tweets/search/recent`, {
+      auth: opts?.auth ?? "bearer",
+      query: params,
+    });
+  }
+
+  async getConversation(
+    tweetIdOrUrl: string,
+    opts?: {
+      all?: boolean;
+      maxResults?: number;
+      tweetFields?: string[];
+      expansions?: string[];
+      userFields?: string[];
+      mediaFields?: string[];
+      auth?: "bearer" | "oauth1";
+    },
+  ): Promise<TwitterConversationResponse> {
+    const auth = opts?.auth ?? "bearer";
+    const root = await this.getTweetById(tweetIdOrUrl, {
+      tweetFields: opts?.tweetFields,
+      expansions: opts?.expansions,
+      userFields: opts?.userFields,
+      mediaFields: opts?.mediaFields,
+      auth,
+    });
+    const conversationId = root.data.conversation_id ?? root.data.id;
+
+    const all: TwitterTweet[] = [];
+    const seen = new Set<string>();
+    let includes: TwitterIncludes = root.includes ?? {};
+    let paginationToken: string | undefined;
+    let page = 0;
+    let partial = false;
+
+    do {
+      const res = await this.searchRecent(`conversation_id:${conversationId}`, {
+        maxResults: opts?.maxResults ?? 100,
+        tweetFields: opts?.tweetFields ?? DEFAULT_TWEET_LOOKUP_FIELDS,
+        expansions: opts?.expansions ?? DEFAULT_TWEET_LOOKUP_EXPANSIONS,
+        userFields: opts?.userFields,
+        mediaFields: opts?.mediaFields,
+        paginationToken,
+        auth,
+      });
+      for (const t of res.data ?? []) {
+        if (seen.has(t.id)) continue;
+        seen.add(t.id);
+        all.push(t);
+      }
+      includes = this.mergeIncludes(includes, res.includes);
+      paginationToken = res.meta?.next_token;
+      page += 1;
+      if (!opts?.all) break;
+      if (page >= CONVERSATION_MAX_PAGES) {
+        partial = true;
+        break;
+      }
+    } while (paginationToken);
+
+    if (!seen.has(root.data.id)) {
+      all.push(root.data);
+      seen.add(root.data.id);
+    }
+
+    all.sort((a, b) => {
+      const ta = a.created_at ? Date.parse(a.created_at) : 0;
+      const tb = b.created_at ? Date.parse(b.created_at) : 0;
+      return ta - tb;
+    });
+
+    const rootTweet = all.find((t) => t.id === conversationId) ?? null;
+
+    return {
+      conversation_id: conversationId,
+      root: rootTweet,
+      tweets: all,
+      includes: Object.keys(includes).length > 0 ? includes : undefined,
+      meta: { result_count: all.length, partial },
+    };
+  }
+
+  private normalizeTweetId(input: string): string {
+    if (!input) {
+      throw new Error("invalid tweet id: empty");
+    }
+    if (TWEET_ID_RE.test(input)) {
+      return input;
+    }
+    const match = input.match(TWEET_URL_RE);
+    if (match) {
+      return match[1];
+    }
+    throw new Error(`invalid tweet id or URL: ${input}`);
+  }
 
   filterBookmarks(
     response: TwitterBookmarkResponse,

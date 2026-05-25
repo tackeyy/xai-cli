@@ -119,8 +119,36 @@ xai --json timeline @elonmusk --count 100
 ### ツイートURL から内容取得
 
 ```bash
+# LLM 経由 (テキスト要約のみ)
 xai tweet "https://x.com/elonmusk/status/123456789"
+
+# X API v2 直叩き — 構造化 JSON (referenced_tweets / conversation_id 等)
+xai tweet "https://x.com/elonmusk/status/123456789" --raw --json
+
+# 任意フィールド指定
+xai tweet 123456789 --raw \
+  --tweet-fields conversation_id,referenced_tweets,public_metrics \
+  --expansions author_id,referenced_tweets.id \
+  --json
 ```
+
+`--raw` モードは `X_BEARER_TOKEN` (`--auth bearer`、既定) または OAuth1.0a (`--auth oauth1`) を使用。
+
+### スレッド全体取得（X API v2）
+
+```bash
+# Tweet ID または URL から会話全体（conversation_id 単位）を時系列で取得
+xai thread 1234567890123456789 --json
+xai thread "https://x.com/foo/status/1234567890" --json
+
+# 100 件超のスレッドは --all で全ページネーション (上限 50 ページ)
+xai thread 1234567890 --all --json
+
+# 1 ページあたりの件数指定 (10-100)
+xai thread 1234567890 --max-results 50
+```
+
+内部で `GET /2/tweets/:id` (親 tweet 取得) + `GET /2/tweets/search/recent?query=conversation_id:XXX` (スレッド全件) を呼ぶ。
 
 ### 汎用プロンプト
 
