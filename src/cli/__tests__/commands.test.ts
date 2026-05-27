@@ -8,6 +8,7 @@ function createMockClient(): XaiClient {
     search: vi.fn().mockResolvedValue({ text: "search results" }),
     getUser: vi.fn().mockResolvedValue({ text: "user tweets" }),
     getTweet: vi.fn().mockResolvedValue({ text: "tweet content" }),
+    getTweetWithImages: vi.fn().mockResolvedValue({ text: "tweet with images" }),
     ask: vi.fn().mockResolvedValue({ text: "answer" }),
     authTest: vi.fn().mockResolvedValue({ ok: true, model: "grok-4-1-fast" }),
   } as unknown as XaiClient;
@@ -129,6 +130,7 @@ function createMockTwitterClient(): TwitterClient {
       ],
       meta: { result_count: 2, partial: false },
     }),
+    getTweetMediaUrls: vi.fn().mockResolvedValue([]),
   };
   return mock as TwitterClient;
 }
@@ -408,6 +410,75 @@ describe("CLI commands", () => {
       const parsed = JSON.parse(logSpy.mock.calls[0][0] as string);
       expect(parsed.data.id).toBe("999");
       expect(parsed.data.conversation_id).toBe("100");
+    });
+
+    // --- --image flag tests (Issue #15) ---
+
+    it("--image: tweet without images falls back to text-only output", async () => {
+      // getTweetMediaUrls returns empty array → no Vision call
+      const tc = createMockTwitterClient();
+      (tc.getTweetMediaUrls as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      const xc = createMockClient();
+      const url = "https://x.com/elonmusk/status/123";
+      await run(["tweet", url, "--image"], xc, tc);
+      expect(xc.getTweet).toHaveBeenCalledWith(url);
+      expect(xc.getTweetWithImages).not.toHaveBeenCalled();
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("tweet content"));
+    });
+
+    it("--image: single image triggers Vision analysis and outputs combined Markdown", async () => {
+      const tc = createMockTwitterClient();
+      (tc.getTweetMediaUrls as ReturnType<typeof vi.fn>).mockResolvedValue([
+        "https://pbs.twimg.com/media/image1.jpg",
+      ]);
+      const xc = createMockClient();
+      const url = "https://x.com/elonmusk/status/456";
+      await run(["tweet", url, "--image"], xc, tc);
+      expect(xc.getTweet).toHaveBeenCalledWith(url);
+      expect(xc.getTweetWithImages).toHaveBeenCalledWith(
+        url,
+        ["https://pbs.twimg.com/media/image1.jpg"],
+      );
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("tweet with images"));
+    });
+
+    it("--image: multiple images (up to 4) are all passed to Vision", async () => {
+      const tc = createMockTwitterClient();
+      const imageUrls = [
+        "https://pbs.twimg.com/media/img1.jpg",
+        "https://pbs.twimg.com/media/img2.jpg",
+        "https://pbs.twimg.com/media/img3.jpg",
+        "https://pbs.twimg.com/media/img4.jpg",
+        "https://pbs.twimg.com/media/img5.jpg", // 5th should be capped
+      ];
+      (tc.getTweetMediaUrls as ReturnType<typeof vi.fn>).mockResolvedValue(imageUrls);
+      const xc = createMockClient();
+      const url = "https://x.com/elonmusk/status/789";
+      await run(["tweet", url, "--image"], xc, tc);
+      expect(xc.getTweetWithImages).toHaveBeenCalledWith(
+        url,
+        imageUrls.slice(0, 4), // max 4
+      );
+    });
+
+    it("--image: Vision API error falls back gracefully to text-only output", async () => {
+      const tc = createMockTwitterClient();
+      (tc.getTweetMediaUrls as ReturnType<typeof vi.fn>).mockResolvedValue([
+        "https://pbs.twimg.com/media/image1.jpg",
+      ]);
+      const xc = createMockClient();
+      (xc.getTweetWithImages as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new Error("Vision API error 500"),
+      );
+      const url = "https://x.com/elonmusk/status/999";
+      await run(["tweet", url, "--image"], xc, tc);
+      // Falls back to text-only
+      expect(xc.getTweet).toHaveBeenCalledWith(url);
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("tweet content"));
+      // Warning is printed to stderr
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Vision API error"),
+      );
     });
   });
 

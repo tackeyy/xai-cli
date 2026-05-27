@@ -2,6 +2,7 @@ import type {
   XaiClientOptions,
   XaiRequest,
   XaiResponse,
+  XaiVisionRequest,
   XSearchTool,
   SearchResult,
 } from "./types.js";
@@ -9,6 +10,8 @@ import { XaiApiError, withRetry } from "./retry.js";
 
 const TWEET_URL_RE = /(?:x\.com|twitter\.com)\/([^/]+)\/status\/(\d+)/;
 const MAX_COUNT = 1000;
+const VISION_MODEL = "grok-4.3";
+export const MAX_TWEET_IMAGES = 4;
 
 export class XaiClient {
   private readonly apiKey: string;
@@ -172,6 +175,78 @@ export class XaiClient {
         },
       ],
       tools: [tool],
+    });
+
+    return { text: this.extractText(response) };
+  }
+
+  private async fetchVisionApi(body: XaiVisionRequest): Promise<XaiResponse> {
+    return withRetry(async () => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+
+      try {
+        const res = await fetch(`${this.baseUrl}/v1/chat/completions`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${this.apiKey}`,
+          },
+          body: JSON.stringify(body),
+          signal: controller.signal,
+        });
+
+        if (!res.ok) {
+          const errorBody = await res.text();
+          const retryAfter = res.headers.get("Retry-After");
+          throw new XaiApiError(
+            res.status,
+            `xAI Vision API error ${res.status}: ${errorBody}`,
+            retryAfter ? parseFloat(retryAfter) : undefined,
+          );
+        }
+
+        // Chat completions returns a different shape — adapt to XaiResponse
+        const json = (await res.json()) as {
+          choices?: Array<{ message?: { content?: string } }>;
+        };
+        const text = json.choices?.[0]?.message?.content ?? "";
+        return {
+          output: [
+            {
+              type: "message",
+              content: [{ type: "output_text", text }],
+            },
+          ],
+        } satisfies XaiResponse;
+      } finally {
+        clearTimeout(timer);
+      }
+    });
+  }
+
+  async getTweetWithImages(url: string, imageUrls: string[]): Promise<SearchResult> {
+    const capped = imageUrls.slice(0, MAX_TWEET_IMAGES);
+
+    const imageContents = capped.map((imageUrl) => ({
+      type: "image_url" as const,
+      image_url: { url: imageUrl },
+    }));
+
+    const response = await this.fetchVisionApi({
+      model: VISION_MODEL,
+      messages: [
+        {
+          role: "user",
+          content: [
+            ...imageContents,
+            {
+              type: "text",
+              text: `以下のX投稿のURL: ${url}\n\n添付画像を詳しく分析してください。\n\n出力フォーマット（Markdown）:\n## 画像内容\n画像に含まれるテキストの文字起こし（OCR）と、画像の内容・文脈の説明を画像ごとに記載してください。`,
+            },
+          ],
+        },
+      ],
     });
 
     return { text: this.extractText(response) };

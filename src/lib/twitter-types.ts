@@ -69,9 +69,17 @@ export interface TwitterEngagementMetrics {
   view_count: number | null;
 }
 
+export interface TwitterMedia {
+  media_key: string;
+  type: "photo" | "video" | "animated_gif" | string;
+  url?: string;
+  preview_image_url?: string;
+}
+
 export interface TwitterIncludes {
   users?: TwitterUser[];
   tweets?: TwitterTweet[];
+  media?: TwitterMedia[];
 }
 
 export interface TwitterUserLookupResponse {
