@@ -134,6 +134,38 @@ xai tweet 123456789 --raw \
 
 `--raw` モードは `X_BEARER_TOKEN` (`--auth bearer`、既定) または OAuth1.0a (`--auth oauth1`) を使用。
 
+### 画像 OCR / Vision 解析 (--image)
+
+画像が主体のツイート（スクリーンショット、資料画像、グラフ等）を Grok Vision で解析します。
+
+```bash
+# ツイート本文 + 添付画像の内容（文字起こし & 文脈説明）を Markdown で出力
+xai tweet "https://x.com/yonkuro_svc/status/2059579175858827763" --image
+
+# JSON 形式で出力
+xai --json tweet "https://x.com/yonkuro_svc/status/2059579175858827763" --image
+```
+
+**動作の流れ:**
+
+1. xAI `x_search` でツイート本文を取得（従来通り）
+2. X API v2 (`expansions=attachments.media_keys&media.fields=url`) で画像 URL を取得（最大 4 枚）
+3. xAI Grok Vision (`grok-4.3`) で画像を分析し、OCR + 文脈説明を生成
+4. Markdown で統合出力（`## ツイート本文` / `## 画像内容` セクション）
+
+**必要な環境変数:**
+
+| 環境変数 | 用途 |
+|---|---|
+| `XAI_API_KEY` | テキスト取得 + Vision 解析（必須） |
+| `X_BEARER_TOKEN` | X API v2 で画像 URL 取得（任意。未設定時はテキストのみ出力） |
+
+**フォールバック動作:**
+
+- `X_BEARER_TOKEN` 未設定 → 画像 URL 取得をスキップし、テキストのみ出力（エラー終了なし）
+- 画像なしツイート → 従来通りのテキスト出力
+- Vision API エラー → 警告を stderr に出力し、テキストのみ出力にフォールバック
+
 ### スレッド全体取得（X API v2）
 
 ```bash
