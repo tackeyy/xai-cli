@@ -317,18 +317,20 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
   // --- tweet ---
   program
     .command("tweet <url>")
-    .description("Get tweet content from URL (LLM-text by default; --raw for X API v2 structured data)")
+    .description("Get tweet content from URL (LLM-text by default; --raw for X API v2 structured data; --image for Vision OCR)")
     .option("--raw", "Fetch via X API v2 GET /2/tweets/:id (structured JSON)")
+    .option("--image", "Analyse attached images via xAI Vision (grok-4.3). Falls back to text-only on error.")
     .option("--tweet-fields <csv>", "Tweet fields (--raw only)", parseCsv)
     .option("--expansions <csv>", "Expansions (--raw only)", parseCsv)
     .option("--user-fields <csv>", "User fields for expansions (--raw only)", parseCsv)
     .option("--media-fields <csv>", "Media fields (--raw only)", parseCsv)
-    .option("--auth <mode>", "Auth mode for --raw: bearer | oauth1", "bearer")
+    .option("--auth <mode>", "Auth mode for --raw / --image: bearer | oauth1", "bearer")
     .action(
       async (
         url: string,
         opts: {
           raw?: boolean;
+          image?: boolean;
           tweetFields?: string[];
           expansions?: string[];
           userFields?: string[];
@@ -357,6 +359,50 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
           }
 
           const client = getClient();
+
+          if (opts.image) {
+            const auth = (opts.auth ?? "bearer") as "bearer" | "oauth1";
+            const tc = getTwitterClient();
+
+            // 1. Fetch text content (always)
+            const textResult = await client.getTweet(url);
+
+            // 2. Fetch media URLs (X API v2)
+            let imageUrls: string[] = [];
+            try {
+              imageUrls = await tc.getTweetMediaUrls(url, { auth });
+            } catch {
+              // No X API token or API error → proceed without images
+            }
+
+            // 3. If images found, run Vision analysis (cap at 4)
+            const cappedImageUrls = imageUrls.slice(0, 4);
+            if (cappedImageUrls.length > 0) {
+              try {
+                const visionResult = await client.getTweetWithImages(url, cappedImageUrls);
+                const combined =
+                  `## ツイート本文\n\n${textResult.text}\n\n` +
+                  `${visionResult.text}`;
+                if (mode === "json") {
+                  jsonOutput({ text: combined, image_count: cappedImageUrls.length });
+                } else {
+                  console.log(combined);
+                }
+                return;
+              } catch (visionErr: any) {
+                console.error(`Warning: Vision analysis failed — ${visionErr.message}. Falling back to text-only.`);
+              }
+            }
+
+            // Fallback: text-only
+            if (mode === "json") {
+              jsonOutput(textResult);
+            } else {
+              console.log(textResult.text);
+            }
+            return;
+          }
+
           const result = await client.getTweet(url);
           if (mode === "json") {
             jsonOutput(result);

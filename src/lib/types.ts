@@ -39,3 +39,19 @@ export interface XaiClientOptions {
   model?: string;
   timeoutMs?: number;
 }
+
+// Vision (chat completions) API types
+
+export type XaiVisionContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } };
+
+export interface XaiVisionMessage {
+  role: "user" | "assistant";
+  content: XaiVisionContentPart[];
+}
+
+export interface XaiVisionRequest {
+  model: string;
+  messages: XaiVisionMessage[];
+}

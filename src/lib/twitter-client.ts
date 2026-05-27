@@ -668,6 +668,71 @@ export class TwitterClient {
 
   // --- Bookmark filtering ---
 
+  // --- Tweet media (Issue #15) ---
+
+  /**
+   * Fetch media (photo) URLs for a tweet via X API v2.
+   * Returns empty array when X_BEARER_TOKEN is unavailable (fallback via oEmbed not needed
+   * because the caller handles the no-image case).
+   * Caps at MAX_TWEET_IMAGES (4) images.
+   */
+  async getTweetMediaUrls(
+    tweetIdOrUrl: string,
+    opts?: { auth?: "bearer" | "oauth1"; maxImages?: number },
+  ): Promise<string[]> {
+    const maxImages = opts?.maxImages ?? 4;
+    const auth = opts?.auth ?? "bearer";
+
+    // If no bearer token available, return empty — caller will fall back to text-only
+    if (!this.bearerToken && auth === "bearer") {
+      return [];
+    }
+
+    let tweetId: string;
+    try {
+      tweetId = this.normalizeTweetId(tweetIdOrUrl);
+    } catch {
+      return [];
+    }
+
+    const response = await this.get<{
+      data: {
+        id: string;
+        attachments?: { media_keys?: string[] };
+      };
+      includes?: {
+        media?: Array<{
+          media_key: string;
+          type: string;
+          url?: string;
+          preview_image_url?: string;
+        }>;
+      };
+    }>(`/2/tweets/${encodeURIComponent(tweetId)}`, {
+      auth,
+      query: {
+        "tweet.fields": "attachments",
+        expansions: "attachments.media_keys",
+        "media.fields": "url,preview_image_url,type",
+      },
+    });
+
+    const mediaKeys = response.data.attachments?.media_keys ?? [];
+    const mediaItems = response.includes?.media ?? [];
+
+    const urls: string[] = [];
+    for (const key of mediaKeys) {
+      if (urls.length >= maxImages) break;
+      const item = mediaItems.find((m) => m.media_key === key);
+      if (!item) continue;
+      // Photos have url; videos have preview_image_url
+      const url = item.url ?? item.preview_image_url;
+      if (url) urls.push(url);
+    }
+
+    return urls;
+  }
+
   // --- Tweet lookup & conversation (Issue #13: R1 + R2) ---
 
   async getTweetById(
