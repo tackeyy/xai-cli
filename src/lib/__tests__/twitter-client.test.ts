@@ -1487,17 +1487,22 @@ describe("TwitterClient.getDmEvents - dm_event.fields and params", () => {
   });
 
   it("includes Elevated hint on 403 with retry-after annotation", async () => {
+    // When retry-after header is present, error msg is "X API error 403 (retry-after: 60s): ..."
+    // The replace regex /^X API error (401|403):/ would NOT match this format — test drives the fix
     fetchSpy.mockResolvedValue(
       new Response(
         JSON.stringify({ title: "Forbidden", detail: "Access denied" }),
         {
           status: 403,
-          headers: { "x-rate-limit-reset": "60" },
+          headers: { "retry-after": "60" },
         },
       ),
     );
     const tc = makeClient();
-    await expect(tc.getDmEvents()).rejects.toThrow(/Requires Elevated\/paid tier access/);
+    const err = await tc.getDmEvents().catch((e) => e);
+    expect(err.message).toMatch(/Requires Elevated\/paid tier access/);
+    // Hint must appear even though message starts with "X API error 403 (retry-after: 60s):"
+    expect(err.message).toContain("retry-after");
   });
 
   it("includes Elevated hint on 401 with retry-after annotation in message", async () => {

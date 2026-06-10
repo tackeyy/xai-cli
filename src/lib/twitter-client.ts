@@ -1060,9 +1060,10 @@ export class TwitterClient {
       });
     } catch (err: unknown) {
       // Annotate 401/403 with a human-readable Elevated access hint
+      // Use includes() to handle retry-after format: "X API error 403 (retry-after: 60s): ..."
       const msg = err instanceof Error ? err.message : String(err);
-      if (/X API error (401|403)/.test(msg)) {
-        throw new Error(`${msg.replace(/^X API error (401|403):/, (m) => m + " Requires Elevated/paid tier access.")}`);
+      if (msg.includes("X API error 401") || msg.includes("X API error 403")) {
+        throw new Error(`${msg} Requires Elevated/paid tier access.`);
       }
       throw err;
     }
