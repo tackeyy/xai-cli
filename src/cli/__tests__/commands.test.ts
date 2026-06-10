@@ -248,6 +248,24 @@ describe("CLI commands", () => {
       );
       expect(xaiClient.search).not.toHaveBeenCalled();
     });
+
+    it("--raw calls twitterClient.searchRecent and outputs raw JSON", async () => {
+      const { twitterClient } = await run(["search", "AI", "--raw"]);
+      expect(twitterClient.searchRecent).toHaveBeenCalledWith("AI");
+    });
+
+    it("--raw without --json outputs raw JSON string", async () => {
+      await run(["search", "AI", "--raw"]);
+      const output = logSpy.mock.calls[0][0];
+      const parsed = JSON.parse(output);
+      expect(parsed).toHaveProperty("data");
+    });
+
+    it("without --raw calls client.search (LLM path) as before", async () => {
+      const { xaiClient } = await run(["search", "AI"]);
+      expect(xaiClient.search).toHaveBeenCalledWith("AI", expect.any(Object));
+    });
+
   });
 
   describe("user", () => {

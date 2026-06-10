@@ -154,21 +154,28 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
     .option("--to <date>", "End date (YYYY-MM-DD)")
     .option("--exclude <handles>", "Exclude handles (comma-separated)")
     .option("--count <n>", "Target number of posts to collect (1-1000)", parseCount)
+    .option("--raw", "Output raw X API v2 response (skip LLM formatting)")
     .action(async (query, opts) => {
       try {
-        const client = getClient();
         const mode = getOutputMode();
-        const result = await client.search(query, {
-          fromDate: opts.from,
-          toDate: opts.to,
-          excludeHandles: opts.exclude?.split(","),
-          count: opts.count,
-        });
-
-        if (mode === "json") {
-          jsonOutput(result);
+        if (opts.raw) {
+          const tc = getTwitterClient();
+          const result = await tc.searchRecent(query);
+          console.log(JSON.stringify(result, null, 2));
         } else {
-          console.log(result.text);
+          const client = getClient();
+          const result = await client.search(query, {
+            fromDate: opts.from,
+            toDate: opts.to,
+            excludeHandles: opts.exclude?.split(","),
+            count: opts.count,
+          });
+
+          if (mode === "json") {
+            jsonOutput(result);
+          } else {
+            console.log(result.text);
+          }
         }
       } catch (err: any) {
         console.error(`Error: ${err.message}`);
