@@ -618,11 +618,13 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
     .option("--max-results <n>", "Max results per page (1-100)", parsePositiveInteger)
     .option("--pagination-token <token>", "Pagination token for next page")
     .option("--dm-conversation-id <id>", "Filter by DM conversation ID")
+    .option("--event-types <types>", "Filter by event types (comma-separated, e.g. MessageCreate)")
     .action(
       async (opts: {
         maxResults?: number;
         paginationToken?: string;
         dmConversationId?: string;
+        eventTypes?: string;
       }) => {
         try {
           const tc = getTwitterClient();
@@ -631,6 +633,7 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
             maxResults: opts.maxResults,
             paginationToken: opts.paginationToken,
             dmConversationId: opts.dmConversationId,
+            eventTypes: opts.eventTypes,
           });
 
           if (mode === "json") {

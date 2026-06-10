@@ -456,6 +456,13 @@ describe("CLI commands", () => {
       await run(["dm-history"], undefined, tc);
       expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("Requires Elevated/paid tier access"));
     });
+
+    it("--event-types passes eventTypes to getDmEvents", async () => {
+      const { twitterClient } = await run(["dm-history", "--event-types", "MessageCreate"]);
+      expect(twitterClient.getDmEvents).toHaveBeenCalledWith(
+        expect.objectContaining({ eventTypes: "MessageCreate" }),
+      );
+    });
   });
 
   describe("tweet", () => {
