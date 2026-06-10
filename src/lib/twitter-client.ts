@@ -82,6 +82,15 @@ const DEFAULT_TIMELINE_TWEET_FIELDS = [
   "organic_metrics",
   "non_public_metrics",
 ];
+// Mentions use Bearer auth by default; organic_metrics/non_public_metrics require
+// OAuth1.0a User Context (own tweets only) and cause 403 with Bearer token.
+const MENTIONS_TWEET_FIELDS = [
+  "id",
+  "text",
+  "created_at",
+  "author_id",
+  "public_metrics",
+];
 const DEFAULT_USER_PROFILE_FIELDS = ["description", "created_at", "verified", "public_metrics"];
 const DM_STATUS_USER_FIELDS = ["receives_your_dm", "connection_status", "protected", "verified"];
 const DEFAULT_TWEET_LOOKUP_FIELDS = [
@@ -508,7 +517,7 @@ export class TwitterClient {
     },
   ): Promise<TwitterUserTimelineResponse> {
     const query: Record<string, string | number | undefined> = {};
-    const tweetFields = opts?.tweetFields ?? DEFAULT_TIMELINE_TWEET_FIELDS;
+    const tweetFields = opts?.tweetFields ?? MENTIONS_TWEET_FIELDS;
     if (tweetFields.length) query["tweet.fields"] = tweetFields.join(",");
     if (opts?.maxResults) query.max_results = opts.maxResults;
     if (opts?.paginationToken) query.pagination_token = opts.paginationToken;

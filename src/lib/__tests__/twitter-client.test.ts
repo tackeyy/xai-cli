@@ -1328,6 +1328,21 @@ describe("TwitterClient.getMentions", () => {
     expect(url).toContain("max_results=20");
     expect(url).toContain("pagination_token=tok123");
   });
+
+  it("does not include organic_metrics or non_public_metrics in tweet.fields (403 guard)", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ data: [], meta: { result_count: 0 } }), { status: 200 }),
+    );
+    const tc = makeBearerClient();
+    await tc.getMentions("789");
+    const url = String(fetchSpy.mock.calls[0][0]);
+    // organic_metrics/non_public_metrics require OAuth1.0a User Context and cause 403
+    // with Bearer token, so MENTIONS_TWEET_FIELDS excludes them
+    expect(url).not.toContain("organic_metrics");
+    expect(url).not.toContain("non_public_metrics");
+    expect(url).toContain("tweet.fields");
+    expect(url).toContain("public_metrics");
+  });
 });
 
 describe("TwitterClient.getDmEvents", () => {
