@@ -1329,3 +1329,64 @@ describe("TwitterClient.getMentions", () => {
     expect(url).toContain("pagination_token=tok123");
   });
 });
+
+describe("TwitterClient.getDmEvents", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    fetchSpy = vi.spyOn(global, "fetch");
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("calls GET /2/dm_events with OAuth1.0a", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: [{ id: "e1", text: "hello DM", event_type: "MessageCreate" }],
+          meta: { result_count: 1 },
+        }),
+        { status: 200 },
+      ),
+    );
+
+    const tc = makeClient();
+    const result = await tc.getDmEvents();
+
+    expect(result.data?.[0].id).toBe("e1");
+    expect(result.meta.result_count).toBe(1);
+
+    const url = String(fetchSpy.mock.calls[0][0]);
+    expect(url).toContain("/2/dm_events");
+
+    const headers = (fetchSpy.mock.calls[0][1]?.headers ?? {}) as Record<string, string>;
+    expect(headers["Authorization"] ?? headers["authorization"]).toMatch(/^OAuth /);
+  });
+
+  it("passes maxResults and paginationToken", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ data: [], meta: { result_count: 0 } }), { status: 200 }),
+    );
+    const tc = makeClient();
+    await tc.getDmEvents({ maxResults: 25, paginationToken: "pageXYZ" });
+    const url = String(fetchSpy.mock.calls[0][0]);
+    expect(url).toContain("max_results=25");
+    expect(url).toContain("pagination_token=pageXYZ");
+  });
+
+  it("throws with 'Requires Elevated/paid tier access' on 403", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ title: "Forbidden", detail: "Access denied" }), { status: 403 }),
+    );
+    const tc = makeClient();
+    await expect(tc.getDmEvents()).rejects.toThrow(/Requires Elevated\/paid tier access/);
+  });
+
+  it("throws with 'Requires Elevated/paid tier access' on 401", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response("Unauthorized", { status: 401 }),
+    );
+    const tc = makeClient();
+    await expect(tc.getDmEvents()).rejects.toThrow(/Requires Elevated\/paid tier access/);
+  });
+});

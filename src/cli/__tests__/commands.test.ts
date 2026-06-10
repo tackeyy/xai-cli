@@ -135,6 +135,10 @@ function createMockTwitterClient(): TwitterClient {
       data: [{ id: "m1", text: "@me hi", like_count: null, retweet_count: null, reply_count: null, quote_count: null, bookmark_count: null, view_count: null }],
       meta: { result_count: 1 },
     }),
+    getDmEvents: vi.fn().mockResolvedValue({
+      data: [{ id: "e1", text: "hello DM", event_type: "MessageCreate" }],
+      meta: { result_count: 1 },
+    }),
   };
   return mock as TwitterClient;
 }
@@ -403,6 +407,29 @@ describe("CLI commands", () => {
       const parsed = JSON.parse(logSpy.mock.calls[0][0] as string);
       expect(parsed).toHaveProperty("data");
       expect(parsed.meta.result_count).toBe(1);
+    });
+  });
+
+  describe("dm-history", () => {
+    it("calls getDmEvents and outputs human-readable list", async () => {
+      const { twitterClient } = await run(["dm-history"]);
+      expect(twitterClient.getDmEvents).toHaveBeenCalledWith(expect.any(Object));
+    });
+
+    it("--json outputs raw DM events response", async () => {
+      await run(["--json", "dm-history"]);
+      const parsed = JSON.parse(logSpy.mock.calls[0][0] as string);
+      expect(parsed).toHaveProperty("data");
+      expect(parsed.meta.result_count).toBe(1);
+    });
+
+    it("outputs error with Elevated/paid tier message on 403", async () => {
+      const tc = createMockTwitterClient();
+      (tc.getDmEvents as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new Error("X API error 403: Requires Elevated/paid tier access. Forbidden"),
+      );
+      await run(["dm-history"], undefined, tc);
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("Requires Elevated/paid tier access"));
     });
   });
 

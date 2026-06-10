@@ -604,6 +604,48 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
       }
     });
 
+  // --- dm-history (D3) ---
+  program
+    .command("dm-history")
+    .description("Get DM conversation history via X API v2 GET /2/dm_events (requires OAuth1.0a with Elevated/paid tier)")
+    .option("--max-results <n>", "Max results per page (1-100)", parsePositiveInteger)
+    .option("--pagination-token <token>", "Pagination token for next page")
+    .option("--dm-conversation-id <id>", "Filter by DM conversation ID")
+    .action(
+      async (opts: {
+        maxResults?: number;
+        paginationToken?: string;
+        dmConversationId?: string;
+      }) => {
+        try {
+          const tc = getTwitterClient();
+          const mode = getOutputMode();
+          const result = await tc.getDmEvents({
+            maxResults: opts.maxResults,
+            paginationToken: opts.paginationToken,
+            dmConversationId: opts.dmConversationId,
+          });
+
+          if (mode === "json") {
+            jsonOutput(result);
+          } else {
+            const count = result.meta?.result_count ?? result.data?.length ?? 0;
+            console.log(`DM events: ${count}`);
+            for (const event of result.data ?? []) {
+              console.log(`  [${event.event_type}] ${event.id}: ${event.text ?? "(no text)"}`);
+            }
+            if (result.meta?.next_token) {
+              console.log(`
+(next page: --pagination-token ${result.meta.next_token})`);
+            }
+          }
+        } catch (err: any) {
+          console.error(`Error: ${err.message}`);
+          process.exit(1);
+        }
+      },
+    );
+
   // --- post ---
   program
     .command("post")

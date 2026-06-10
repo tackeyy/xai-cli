@@ -17,6 +17,7 @@ import type {
   TwitterUser,
   TwitterUserProfile,
   TwitterUserTimelineResponse,
+  TwitterDmEventsResponse,
 } from "./twitter-types.js";
 
 export interface TwitterClientOptions {
@@ -972,6 +973,62 @@ export class TwitterClient {
       includes: filteredUsers?.length ? { ...response.includes, users: filteredUsers } : response.includes,
       meta: { result_count: matchedData.length },
     };
+  }
+
+  // --- DM Events (D3) ---
+
+  async getDmEvents(
+    opts?: {
+      maxResults?: number;
+      paginationToken?: string;
+      dmConversationId?: string;
+      eventTypes?: string;
+    },
+  ): Promise<TwitterDmEventsResponse> {
+    this.requireOAuth1Credentials();
+
+    const query: Record<string, string | number | undefined> = {};
+    if (opts?.maxResults) query.max_results = opts.maxResults;
+    if (opts?.paginationToken) query.pagination_token = opts.paginationToken;
+    if (opts?.dmConversationId) query.dm_conversation_id = opts.dmConversationId;
+    if (opts?.eventTypes) query.event_types = opts.eventTypes;
+
+    const url = new URL("/2/dm_events", this.baseUrl);
+    for (const [k, v] of Object.entries(query)) {
+      if (v !== undefined) url.searchParams.set(k, String(v));
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+
+    try {
+      const res = await fetch(url.toString(), {
+        method: "GET",
+        headers: {
+          Authorization: this.buildOAuthHeader("GET", url.origin + url.pathname, Object.fromEntries(url.searchParams.entries())),
+        },
+        signal: controller.signal,
+      });
+
+      if (res.status === 401 || res.status === 403) {
+        const errorBody = await res.text();
+        throw new Error(
+          `X API error ${res.status}: Requires Elevated/paid tier access. ${errorBody}`,
+        );
+      }
+
+      if (!res.ok) {
+        const errorBody = await res.text();
+        const retryAfterHeader = res.headers.get("retry-after");
+        const retryHint = retryAfterHeader ? ` (retry-after: ${retryAfterHeader}s)` : "";
+        throw new Error(`X API error ${res.status}${retryHint}: ${errorBody}`);
+      }
+
+      const data = await res.json();
+      return data as TwitterDmEventsResponse;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   // --- Post / Reply (existing) ---
