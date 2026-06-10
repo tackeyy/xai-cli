@@ -160,7 +160,14 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
         const mode = getOutputMode();
         if (opts.raw) {
           const tc = getTwitterClient();
-          const result = await tc.searchRecent(query);
+          if (opts.exclude) {
+            process.stderr.write("Warning: --exclude is not supported with --raw and will be ignored.\n");
+          }
+          const result = await tc.searchRecent(query, {
+            startTime: opts.from ? opts.from + "T00:00:00Z" : undefined,
+            endTime: opts.to ? opts.to + "T23:59:59Z" : undefined,
+            maxResults: opts.count,
+          });
           console.log(JSON.stringify(result, null, 2));
         } else {
           const client = getClient();

@@ -259,7 +259,23 @@ describe("CLI commands", () => {
 
     it("--raw calls twitterClient.searchRecent and outputs raw JSON", async () => {
       const { twitterClient } = await run(["search", "AI", "--raw"]);
-      expect(twitterClient.searchRecent).toHaveBeenCalledWith("AI");
+      expect(twitterClient.searchRecent).toHaveBeenCalledWith("AI", expect.any(Object));
+    });
+
+    it("--raw + --from/--to passes startTime/endTime to searchRecent", async () => {
+      const { twitterClient } = await run(["search", "AI", "--raw", "--from", "2026-01-01", "--to", "2026-01-31"]);
+      expect(twitterClient.searchRecent).toHaveBeenCalledWith(
+        "AI",
+        expect.objectContaining({ startTime: "2026-01-01T00:00:00Z", endTime: "2026-01-31T23:59:59Z" }),
+      );
+    });
+
+    it("--raw + --count passes maxResults to searchRecent", async () => {
+      const { twitterClient } = await run(["search", "AI", "--raw", "--count", "50"]);
+      expect(twitterClient.searchRecent).toHaveBeenCalledWith(
+        "AI",
+        expect.objectContaining({ maxResults: 50 }),
+      );
     });
 
     it("--raw without --json outputs raw JSON string", async () => {
