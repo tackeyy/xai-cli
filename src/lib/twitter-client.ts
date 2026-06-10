@@ -1002,41 +1002,18 @@ export class TwitterClient {
     if (opts?.dmConversationId) query.dm_conversation_id = opts.dmConversationId;
     if (opts?.eventTypes) query.event_types = opts.eventTypes;
 
-    const url = new URL("/2/dm_events", this.baseUrl);
-    for (const [k, v] of Object.entries(query)) {
-      if (v !== undefined) url.searchParams.set(k, String(v));
-    }
-
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
-
     try {
-      const res = await fetch(url.toString(), {
-        method: "GET",
-        headers: {
-          Authorization: this.buildOAuthHeader("GET", url.origin + url.pathname, Object.fromEntries(url.searchParams.entries())),
-        },
-        signal: controller.signal,
+      return await this.get<TwitterDmEventsResponse>("/2/dm_events", {
+        auth: "oauth1",
+        query,
       });
-
-      if (res.status === 401 || res.status === 403) {
-        const errorBody = await res.text();
-        throw new Error(
-          `X API error ${res.status}: Requires Elevated/paid tier access. ${errorBody}`,
-        );
+    } catch (err: unknown) {
+      // Annotate 401/403 with a human-readable Elevated access hint
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/X API error (401|403)/.test(msg)) {
+        throw new Error(`${msg.replace(/^X API error (401|403):/, (m) => m + " Requires Elevated/paid tier access.")}`);
       }
-
-      if (!res.ok) {
-        const errorBody = await res.text();
-        const retryAfterHeader = res.headers.get("retry-after");
-        const retryHint = retryAfterHeader ? ` (retry-after: ${retryAfterHeader}s)` : "";
-        throw new Error(`X API error ${res.status}${retryHint}: ${errorBody}`);
-      }
-
-      const data = await res.json();
-      return data as TwitterDmEventsResponse;
-    } finally {
-      clearTimeout(timer);
+      throw err;
     }
   }
 
