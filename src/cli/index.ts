@@ -323,6 +323,65 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
       },
     );
 
+
+  // --- mentions ---
+  program
+    .command("mentions <user>")
+    .description("Get mentions of a user via X API v2 GET /2/users/:id/mentions")
+    .option("--tweet-fields <csv>", "Tweet fields (comma-separated)", parseCsv)
+    .option("--max-results <n>", "Max results per page (5-100)", parsePositiveInteger)
+    .option("--pagination-token <token>", "Pagination token for next page")
+    .option("--auth <mode>", "Auth mode: bearer | oauth1", "bearer")
+    .action(
+      async (
+        user: string,
+        opts: {
+          tweetFields?: string[];
+          maxResults?: number;
+          paginationToken?: string;
+          auth?: string;
+        },
+      ) => {
+        try {
+          const tc = getTwitterClient();
+          const mode = getOutputMode();
+          const authMode = (opts.auth === "oauth1" ? "oauth1" : "bearer") as "bearer" | "oauth1";
+
+          let userId: string;
+          let resolvedUser: { id: string; username: string; name?: string } | undefined;
+          if (isNumericId(user)) {
+            userId = user;
+          } else {
+            const username = stripAt(user);
+            const lookup = await tc.getUserByUsername(username, { auth: authMode });
+            userId = lookup.data.id;
+            resolvedUser = { id: lookup.data.id, username: lookup.data.username ?? username, name: lookup.data.name };
+          }
+
+          const result = await tc.getMentions(userId, {
+            tweetFields: opts.tweetFields,
+            maxResults: opts.maxResults,
+            paginationToken: opts.paginationToken,
+            auth: authMode,
+          });
+
+          if (mode === "json") {
+            jsonOutput({ resolved_user: resolvedUser, ...result });
+          } else {
+            console.log(`Mentions: ${result.meta?.result_count ?? result.data?.length ?? 0} tweets`);
+            formatTimelineOutput(result.data ?? []);
+            if (result.meta?.next_token) {
+              console.log(`
+(next page: --pagination-token ${result.meta.next_token})`);
+            }
+          }
+        } catch (err: any) {
+          console.error(`Error: ${err.message}`);
+          process.exit(1);
+        }
+      },
+    );
+
   // --- tweet ---
   program
     .command("tweet <url>")

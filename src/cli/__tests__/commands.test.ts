@@ -131,6 +131,10 @@ function createMockTwitterClient(): TwitterClient {
       meta: { result_count: 2, partial: false },
     }),
     getTweetMediaUrls: vi.fn().mockResolvedValue([]),
+    getMentions: vi.fn().mockResolvedValue({
+      data: [{ id: "m1", text: "@me hi", like_count: null, retweet_count: null, reply_count: null, quote_count: null, bookmark_count: null, view_count: null }],
+      meta: { result_count: 1 },
+    }),
   };
   return mock as TwitterClient;
 }
@@ -382,6 +386,22 @@ describe("CLI commands", () => {
       await run(["--json", "timeline", "12345"]);
       const parsed = JSON.parse(logSpy.mock.calls[0][0]);
       expect(parsed.data[0]).toHaveProperty("retweet_count");
+      expect(parsed.meta.result_count).toBe(1);
+    });
+  });
+
+
+  describe("mentions", () => {
+    it("resolves handle and calls getMentions", async () => {
+      const { twitterClient } = await run(["mentions", "@zeimu_ai"]);
+      expect(twitterClient.getUserByUsername).toHaveBeenCalledWith("zeimu_ai", expect.objectContaining({ auth: "bearer" }));
+      expect(twitterClient.getMentions).toHaveBeenCalledWith("12345", expect.any(Object));
+    });
+
+    it("--json outputs mentions with resolved_user", async () => {
+      await run(["--json", "mentions", "@zeimu_ai"]);
+      const parsed = JSON.parse(logSpy.mock.calls[0][0] as string);
+      expect(parsed).toHaveProperty("data");
       expect(parsed.meta.result_count).toBe(1);
     });
   });

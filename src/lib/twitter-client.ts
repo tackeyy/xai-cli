@@ -494,6 +494,32 @@ export class TwitterClient {
     };
   }
 
+
+  // --- Mentions ---
+
+  async getMentions(
+    userId: string,
+    opts?: {
+      tweetFields?: string[];
+      maxResults?: number;
+      paginationToken?: string;
+      auth?: "bearer" | "oauth1";
+    },
+  ): Promise<TwitterUserTimelineResponse> {
+    const query: Record<string, string | number | undefined> = {};
+    const tweetFields = opts?.tweetFields ?? DEFAULT_TIMELINE_TWEET_FIELDS;
+    if (tweetFields.length) query["tweet.fields"] = tweetFields.join(",");
+    if (opts?.maxResults) query.max_results = opts.maxResults;
+    if (opts?.paginationToken) query.pagination_token = opts.paginationToken;
+
+    const response = await this.get<TwitterUserTimelineResponse>(
+      `/2/users/${encodeURIComponent(userId)}/mentions`,
+      { auth: opts?.auth ?? "bearer", query },
+    );
+
+    return this.normalizeTweetResponse(response);
+  }
+
   // --- Bookmarks ---
 
   async getBookmarks(

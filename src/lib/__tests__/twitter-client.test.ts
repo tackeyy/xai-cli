@@ -1287,3 +1287,45 @@ describe("TwitterClient.getConversation", () => {
     expect(result.meta.result_count).toBe(1);
   });
 });
+
+describe("TwitterClient.getMentions", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    fetchSpy = vi.spyOn(global, "fetch");
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("calls GET /2/users/:id/mentions with userId", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: [{ id: "m1", text: "@me hello" }],
+          meta: { result_count: 1 },
+        }),
+        { status: 200 },
+      ),
+    );
+
+    const tc = makeBearerClient();
+    const result = await tc.getMentions("123");
+
+    expect(result.data?.[0].id).toBe("m1");
+    expect(result.meta.result_count).toBe(1);
+
+    const url = String(fetchSpy.mock.calls[0][0]);
+    expect(url).toContain("/2/users/123/mentions");
+  });
+
+  it("passes maxResults and paginationToken as query params", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ data: [], meta: { result_count: 0 } }), { status: 200 }),
+    );
+    const tc = makeBearerClient();
+    await tc.getMentions("456", { maxResults: 20, paginationToken: "tok123" });
+    const url = String(fetchSpy.mock.calls[0][0]);
+    expect(url).toContain("max_results=20");
+    expect(url).toContain("pagination_token=tok123");
+  });
+});
