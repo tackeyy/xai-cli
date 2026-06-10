@@ -174,5 +174,5 @@ export interface TwitterDmEvent {
 
 export interface TwitterDmEventsResponse {
   data?: TwitterDmEvent[];
-  meta: TwitterMeta;
+  meta?: TwitterMeta;
 }
