@@ -163,10 +163,14 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
           if (opts.exclude) {
             process.stderr.write("Warning: --exclude is not supported with --raw and will be ignored.\n");
           }
+          const rawMaxResults = opts.count !== undefined ? Math.min(opts.count, 100) : undefined;
+          if (opts.count !== undefined && opts.count > 100) {
+            process.stderr.write("Warning: max_results is capped at 100 for --raw mode.\n");
+          }
           const result = await tc.searchRecent(query, {
             startTime: opts.from ? opts.from + "T00:00:00Z" : undefined,
             endTime: opts.to ? opts.to + "T23:59:59Z" : undefined,
-            maxResults: opts.count,
+            maxResults: rawMaxResults,
           });
           console.log(JSON.stringify(result, null, 2));
         } else {

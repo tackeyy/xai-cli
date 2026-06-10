@@ -282,6 +282,28 @@ describe("CLI commands", () => {
       );
     });
 
+    it("--raw + --count 200 caps maxResults at 100 and warns to stderr", async () => {
+      const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+      const { twitterClient } = await run(["search", "AI", "--raw", "--count", "200"]);
+      expect(twitterClient.searchRecent).toHaveBeenCalledWith(
+        "AI",
+        expect.objectContaining({ maxResults: 100 }),
+      );
+      expect(stderrSpy).toHaveBeenCalledWith(
+        expect.stringContaining("max_results is capped at 100 for --raw mode"),
+      );
+      stderrSpy.mockRestore();
+    });
+
+    it("--raw + --exclude warns to stderr about being ignored", async () => {
+      const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+      await run(["search", "AI", "--raw", "--exclude", "spam1"]);
+      expect(stderrSpy).toHaveBeenCalledWith(
+        expect.stringContaining("--exclude is not supported with --raw"),
+      );
+      stderrSpy.mockRestore();
+    });
+
     it("--raw without --json outputs raw JSON string", async () => {
       await run(["search", "AI", "--raw"]);
       const output = logSpy.mock.calls[0][0];
