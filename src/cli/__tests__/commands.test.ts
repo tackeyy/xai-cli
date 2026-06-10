@@ -136,7 +136,7 @@ function createMockTwitterClient(): TwitterClient {
       meta: { result_count: 1 },
     }),
     getDmEvents: vi.fn().mockResolvedValue({
-      data: [{ id: "e1", text: "hello DM", event_type: "MessageCreate" }],
+      data: [{ id: "e1", text: "hello DM", event_type: "MessageCreate", sender_id: "42", created_at: "2026-01-01T00:00:00.000Z", dm_conversation_id: "conv99" }],
       meta: { result_count: 1 },
     }),
   };
@@ -414,6 +414,15 @@ describe("CLI commands", () => {
     it("calls getDmEvents and outputs human-readable list", async () => {
       const { twitterClient } = await run(["dm-history"]);
       expect(twitterClient.getDmEvents).toHaveBeenCalledWith(expect.any(Object));
+    });
+
+    it("human output includes sender_id and created_at", async () => {
+      await run(["dm-history"]);
+      const allOutput = logSpy.mock.calls.map((c) => String(c[0])).join("\n");
+      expect(allOutput).toContain("sender=42");
+      expect(allOutput).toContain("2026-01-01T00:00:00.000Z");
+      expect(allOutput).toContain("conv=conv99");
+      expect(allOutput).toContain("hello DM");
     });
 
     it("--json outputs raw DM events response", async () => {

@@ -632,7 +632,10 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
             const count = result.meta?.result_count ?? result.data?.length ?? 0;
             console.log(`DM events: ${count}`);
             for (const event of result.data ?? []) {
-              console.log(`  [${event.event_type}] ${event.id}: ${event.text ?? "(no text)"}`);
+              const ts = event.created_at ?? "?";
+              const sender = event.sender_id ?? "?";
+              const conv = event.dm_conversation_id ?? "?";
+              console.log(`  [${ts}] sender=${sender} conv=${conv}: ${event.text ?? "(no text)"}`);
             }
             if (result.meta?.next_token) {
               console.log(`
