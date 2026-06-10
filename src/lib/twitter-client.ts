@@ -17,6 +17,7 @@ import type {
   TwitterUser,
   TwitterUserProfile,
   TwitterUserTimelineResponse,
+  TwitterDmEventsResponse,
 } from "./twitter-types.js";
 
 export interface TwitterClientOptions {
@@ -41,11 +42,13 @@ export interface PostTweetInput {
   replyTo?: string;
   maxLength?: number;
   noLengthCheck?: boolean;
+  quoteTweetId?: string;
 }
 
 export interface PostTweetPayload {
   text: string;
   reply?: { in_reply_to_tweet_id: string };
+  quote_tweet_id?: string;
 }
 
 export interface PostTweetResult {
@@ -79,8 +82,18 @@ const DEFAULT_TIMELINE_TWEET_FIELDS = [
   "organic_metrics",
   "non_public_metrics",
 ];
+// Mentions use Bearer auth by default; organic_metrics/non_public_metrics require
+// OAuth1.0a User Context (own tweets only) and cause 403 with Bearer token.
+const MENTIONS_TWEET_FIELDS = [
+  "id",
+  "text",
+  "created_at",
+  "author_id",
+  "public_metrics",
+];
 const DEFAULT_USER_PROFILE_FIELDS = ["description", "created_at", "verified", "public_metrics"];
 const DM_STATUS_USER_FIELDS = ["receives_your_dm", "connection_status", "protected", "verified"];
+const DM_EVENT_DEFAULT_FIELDS = "id,event_type,text,sender_id,created_at,dm_conversation_id";
 const DEFAULT_TWEET_LOOKUP_FIELDS = [
   "id",
   "text",
@@ -489,6 +502,80 @@ export class TwitterClient {
       data: allData,
       includes: Object.keys(includes).length > 0 ? includes : undefined,
       meta: { result_count: allData.length },
+    };
+  }
+
+
+  // --- Mentions ---
+
+  async getMentions(
+    userId: string,
+    opts?: {
+      tweetFields?: string[];
+      maxResults?: number;
+      paginationToken?: string;
+      auth?: "bearer" | "oauth1";
+    },
+  ): Promise<TwitterUserTimelineResponse> {
+    const query: Record<string, string | number | undefined> = {};
+    const tweetFields = opts?.tweetFields ?? MENTIONS_TWEET_FIELDS;
+    if (tweetFields.length) query["tweet.fields"] = tweetFields.join(",");
+    if (opts?.maxResults) query.max_results = opts.maxResults;
+    if (opts?.paginationToken) query.pagination_token = opts.paginationToken;
+
+    const response = await this.get<TwitterUserTimelineResponse>(
+      `/2/users/${encodeURIComponent(userId)}/mentions`,
+      { auth: opts?.auth ?? "bearer", query },
+    );
+
+    return this.normalizeTweetResponse(response);
+  }
+
+  async getMentionsCount(
+    userId: string,
+    opts: {
+      count: number;
+      tweetFields?: string[];
+      maxResults?: number;
+      auth?: "bearer" | "oauth1";
+    },
+  ): Promise<TwitterUserTimelineResponse> {
+    this.validateCount(opts.count);
+    const allData: TwitterTweet[] = [];
+    const seenTweetIds = new Set<string>();
+    let includes: TwitterIncludes = {};
+    let paginationToken: string | undefined;
+    let partial = false;
+
+    do {
+      const remaining = opts.count - allData.length;
+      const pageSize = Math.min(opts.maxResults ?? 100, remaining);
+      const res = await this.getMentions(userId, {
+        tweetFields: opts.tweetFields,
+        maxResults: pageSize,
+        paginationToken,
+        auth: opts.auth,
+      });
+
+      for (const tweet of res.data ?? []) {
+        if (seenTweetIds.has(tweet.id)) continue;
+        seenTweetIds.add(tweet.id);
+        allData.push(tweet);
+        if (allData.length >= opts.count) break;
+      }
+      includes = this.mergeIncludes(includes, res.includes);
+      paginationToken = res.meta?.next_token;
+    } while (paginationToken && allData.length < opts.count);
+
+    if (!paginationToken && allData.length < opts.count) {
+      partial = true;
+    }
+
+    const data = allData.slice(0, opts.count);
+    return {
+      data,
+      includes: Object.keys(includes).length > 0 ? includes : undefined,
+      meta: { result_count: data.length, requested_count: opts.count, partial },
     };
   }
 
@@ -946,6 +1033,42 @@ export class TwitterClient {
     };
   }
 
+  // --- DM Events (D3) ---
+
+  async getDmEvents(
+    opts?: {
+      maxResults?: number;
+      paginationToken?: string;
+      dmConversationId?: string;
+      eventTypes?: string;
+      dmEventFields?: string;
+    },
+  ): Promise<TwitterDmEventsResponse> {
+    this.requireOAuth1Credentials();
+
+    const query: Record<string, string | number | undefined> = {};
+    if (opts?.maxResults) query.max_results = opts.maxResults;
+    if (opts?.paginationToken) query.pagination_token = opts.paginationToken;
+    if (opts?.dmConversationId) query.dm_conversation_id = opts.dmConversationId;
+    if (opts?.eventTypes) query.event_types = opts.eventTypes;
+    query["dm_event.fields"] = opts?.dmEventFields ?? DM_EVENT_DEFAULT_FIELDS;
+
+    try {
+      return await this.get<TwitterDmEventsResponse>("/2/dm_events", {
+        auth: "oauth1",
+        query,
+      });
+    } catch (err: unknown) {
+      // Annotate 401/403 with a human-readable Elevated access hint
+      // Use includes() to handle retry-after format: "X API error 403 (retry-after: 60s): ..."
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes("X API error 401") || msg.includes("X API error 403")) {
+        throw new Error(`${msg} Requires Elevated/paid tier access.`);
+      }
+      throw err;
+    }
+  }
+
   // --- Post / Reply (existing) ---
 
   async replyTweet(inReplyToTweetId: string, text: string): Promise<ReplyResult> {
@@ -999,6 +1122,9 @@ export class TwitterClient {
     const payload: PostTweetPayload = { text: combinedText };
     if (input.replyTo) {
       payload.reply = { in_reply_to_tweet_id: input.replyTo };
+    }
+    if (input.quoteTweetId) {
+      payload.quote_tweet_id = input.quoteTweetId;
     }
     return payload;
   }

@@ -131,6 +131,18 @@ function createMockTwitterClient(): TwitterClient {
       meta: { result_count: 2, partial: false },
     }),
     getTweetMediaUrls: vi.fn().mockResolvedValue([]),
+    getMentions: vi.fn().mockResolvedValue({
+      data: [{ id: "m1", text: "@me hi", like_count: null, retweet_count: null, reply_count: null, quote_count: null, bookmark_count: null, view_count: null }],
+      meta: { result_count: 1 },
+    }),
+    getMentionsCount: vi.fn().mockResolvedValue({
+      data: [{ id: "m1", text: "@me hi" }, { id: "m2", text: "@me hey" }],
+      meta: { result_count: 2, requested_count: 2, partial: false },
+    }),
+    getDmEvents: vi.fn().mockResolvedValue({
+      data: [{ id: "e1", text: "hello DM", event_type: "MessageCreate", sender_id: "42", created_at: "2026-01-01T00:00:00.000Z", dm_conversation_id: "conv99" }],
+      meta: { result_count: 1 },
+    }),
   };
   return mock as TwitterClient;
 }
@@ -248,6 +260,62 @@ describe("CLI commands", () => {
       );
       expect(xaiClient.search).not.toHaveBeenCalled();
     });
+
+    it("--raw calls twitterClient.searchRecent and outputs raw JSON", async () => {
+      const { twitterClient } = await run(["search", "AI", "--raw"]);
+      expect(twitterClient.searchRecent).toHaveBeenCalledWith("AI", expect.any(Object));
+    });
+
+    it("--raw + --from/--to passes startTime/endTime to searchRecent", async () => {
+      const { twitterClient } = await run(["search", "AI", "--raw", "--from", "2026-01-01", "--to", "2026-01-31"]);
+      expect(twitterClient.searchRecent).toHaveBeenCalledWith(
+        "AI",
+        expect.objectContaining({ startTime: "2026-01-01T00:00:00Z", endTime: "2026-01-31T23:59:59Z" }),
+      );
+    });
+
+    it("--raw + --count passes maxResults to searchRecent", async () => {
+      const { twitterClient } = await run(["search", "AI", "--raw", "--count", "50"]);
+      expect(twitterClient.searchRecent).toHaveBeenCalledWith(
+        "AI",
+        expect.objectContaining({ maxResults: 50 }),
+      );
+    });
+
+    it("--raw + --count 200 caps maxResults at 100 and warns to stderr", async () => {
+      const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+      const { twitterClient } = await run(["search", "AI", "--raw", "--count", "200"]);
+      expect(twitterClient.searchRecent).toHaveBeenCalledWith(
+        "AI",
+        expect.objectContaining({ maxResults: 100 }),
+      );
+      expect(stderrSpy).toHaveBeenCalledWith(
+        expect.stringContaining("max_results is capped at 100 for --raw mode"),
+      );
+      stderrSpy.mockRestore();
+    });
+
+    it("--raw + --exclude warns to stderr about being ignored", async () => {
+      const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+      await run(["search", "AI", "--raw", "--exclude", "spam1"]);
+      expect(stderrSpy).toHaveBeenCalledWith(
+        expect.stringContaining("--exclude is not supported with --raw"),
+      );
+      stderrSpy.mockRestore();
+    });
+
+    it("--raw without --json outputs raw JSON string", async () => {
+      await run(["search", "AI", "--raw"]);
+      const output = logSpy.mock.calls[0][0];
+      const parsed = JSON.parse(output);
+      expect(parsed).toHaveProperty("data");
+    });
+
+    it("without --raw calls client.search (LLM path) as before", async () => {
+      const { xaiClient } = await run(["search", "AI"]);
+      expect(xaiClient.search).toHaveBeenCalledWith("AI", expect.any(Object));
+    });
+
   });
 
   describe("user", () => {
@@ -365,6 +433,70 @@ describe("CLI commands", () => {
       const parsed = JSON.parse(logSpy.mock.calls[0][0]);
       expect(parsed.data[0]).toHaveProperty("retweet_count");
       expect(parsed.meta.result_count).toBe(1);
+    });
+  });
+
+
+  describe("mentions", () => {
+    it("resolves handle and calls getMentions", async () => {
+      const { twitterClient } = await run(["mentions", "@zeimu_ai"]);
+      expect(twitterClient.getUserByUsername).toHaveBeenCalledWith("zeimu_ai", expect.objectContaining({ auth: "bearer" }));
+      expect(twitterClient.getMentions).toHaveBeenCalledWith("12345", expect.any(Object));
+    });
+
+    it("--json outputs mentions with resolved_user", async () => {
+      await run(["--json", "mentions", "@zeimu_ai"]);
+      const parsed = JSON.parse(logSpy.mock.calls[0][0] as string);
+      expect(parsed).toHaveProperty("data");
+      expect(parsed.meta.result_count).toBe(1);
+    });
+
+    it("--count calls getMentionsCount instead of getMentions", async () => {
+      const { twitterClient } = await run(["mentions", "@zeimu_ai", "--count", "2"]);
+      expect(twitterClient.getMentionsCount).toHaveBeenCalledWith(
+        "12345",
+        expect.objectContaining({ count: 2 }),
+      );
+      expect(twitterClient.getMentions).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("dm-history", () => {
+    it("calls getDmEvents and outputs human-readable list", async () => {
+      const { twitterClient } = await run(["dm-history"]);
+      expect(twitterClient.getDmEvents).toHaveBeenCalledWith(expect.any(Object));
+    });
+
+    it("human output includes sender_id and created_at", async () => {
+      await run(["dm-history"]);
+      const allOutput = logSpy.mock.calls.map((c) => String(c[0])).join("\n");
+      expect(allOutput).toContain("sender=42");
+      expect(allOutput).toContain("2026-01-01T00:00:00.000Z");
+      expect(allOutput).toContain("conv=conv99");
+      expect(allOutput).toContain("hello DM");
+    });
+
+    it("--json outputs raw DM events response", async () => {
+      await run(["--json", "dm-history"]);
+      const parsed = JSON.parse(logSpy.mock.calls[0][0] as string);
+      expect(parsed).toHaveProperty("data");
+      expect(parsed.meta.result_count).toBe(1);
+    });
+
+    it("outputs error with Elevated/paid tier message on 403", async () => {
+      const tc = createMockTwitterClient();
+      (tc.getDmEvents as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new Error("X API error 403: Requires Elevated/paid tier access. Forbidden"),
+      );
+      await run(["dm-history"], undefined, tc);
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("Requires Elevated/paid tier access"));
+    });
+
+    it("--event-types passes eventTypes to getDmEvents", async () => {
+      const { twitterClient } = await run(["dm-history", "--event-types", "MessageCreate"]);
+      expect(twitterClient.getDmEvents).toHaveBeenCalledWith(
+        expect.objectContaining({ eventTypes: "MessageCreate" }),
+      );
     });
   });
 
@@ -621,6 +753,25 @@ describe("CLI commands", () => {
         url: "https://example.com",
         replyTo: "999",
       });
+    });
+
+    it("passes --quote-tweet-id through to postTweet", async () => {
+      const { twitterClient } = await run([
+        "post",
+        "--text",
+        "great post",
+        "--quote-tweet-id",
+        "888777666",
+      ]);
+      expect(twitterClient.postTweet).toHaveBeenCalledWith(
+        expect.objectContaining({ quoteTweetId: "888777666" }),
+      );
+    });
+
+    it("passes --quote-tweet-id to buildPostPayload (dry-run)", async () => {
+      await run(["post", "--dry-run", "--text", "quoting", "--quote-tweet-id", "111"]);
+      const allOutput = logSpy.mock.calls.map((c) => String(c[0])).join("\n");
+      expect(allOutput).toContain("quote_tweet_id");
     });
 
     it("passes --max-length through to postTweet", async () => {

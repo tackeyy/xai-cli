@@ -207,6 +207,13 @@ describe("TwitterClient.buildPostPayload (dry-run helper)", () => {
     const payload = tc.buildPostPayload({ text: "あ".repeat(141), noLengthCheck: true });
     expect(payload).toEqual({ text: "あ".repeat(141) });
   });
+
+  it("adds quote_tweet_id when quoteTweetId is given", () => {
+    const tc = makeClient();
+    const payload = tc.buildPostPayload({ text: "check this", quoteTweetId: "42" });
+    expect(payload).toEqual({ text: "check this", quote_tweet_id: "42" });
+  });
+
 });
 
 // --- GET helper tests ---
@@ -1278,5 +1285,232 @@ describe("TwitterClient.getConversation", () => {
     const result = await tc.getConversation("1");
     expect(result.meta.partial).toBe(false);
     expect(result.meta.result_count).toBe(1);
+  });
+});
+
+describe("TwitterClient.getMentions", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    fetchSpy = vi.spyOn(global, "fetch");
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("calls GET /2/users/:id/mentions with userId", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: [{ id: "m1", text: "@me hello" }],
+          meta: { result_count: 1 },
+        }),
+        { status: 200 },
+      ),
+    );
+
+    const tc = makeBearerClient();
+    const result = await tc.getMentions("123");
+
+    expect(result.data?.[0].id).toBe("m1");
+    expect(result.meta.result_count).toBe(1);
+
+    const url = String(fetchSpy.mock.calls[0][0]);
+    expect(url).toContain("/2/users/123/mentions");
+  });
+
+  it("passes maxResults and paginationToken as query params", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ data: [], meta: { result_count: 0 } }), { status: 200 }),
+    );
+    const tc = makeBearerClient();
+    await tc.getMentions("456", { maxResults: 20, paginationToken: "tok123" });
+    const url = String(fetchSpy.mock.calls[0][0]);
+    expect(url).toContain("max_results=20");
+    expect(url).toContain("pagination_token=tok123");
+  });
+
+  it("does not include organic_metrics or non_public_metrics in tweet.fields (403 guard)", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ data: [], meta: { result_count: 0 } }), { status: 200 }),
+    );
+    const tc = makeBearerClient();
+    await tc.getMentions("789");
+    const url = String(fetchSpy.mock.calls[0][0]);
+    // organic_metrics/non_public_metrics require OAuth1.0a User Context and cause 403
+    // with Bearer token, so MENTIONS_TWEET_FIELDS excludes them
+    expect(url).not.toContain("organic_metrics");
+    expect(url).not.toContain("non_public_metrics");
+    expect(url).toContain("tweet.fields");
+    expect(url).toContain("public_metrics");
+  });
+});
+
+describe("TwitterClient.getMentionsCount", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    fetchSpy = vi.spyOn(global, "fetch");
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("collects multiple pages until count is reached", async () => {
+    const page1 = { data: [{ id: "m1", text: "a" }, { id: "m2", text: "b" }], meta: { result_count: 2, next_token: "tok2" } };
+    const page2 = { data: [{ id: "m3", text: "c" }], meta: { result_count: 1 } };
+    fetchSpy
+      .mockResolvedValueOnce(new Response(JSON.stringify(page1), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(page2), { status: 200 }));
+
+    const tc = makeBearerClient();
+    const result = await tc.getMentionsCount("123", { count: 3 });
+
+    expect(result.data).toHaveLength(3);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(result.meta.result_count).toBe(3);
+  });
+
+  it("stops early when count is satisfied within first page", async () => {
+    const page1 = { data: [{ id: "m1", text: "a" }, { id: "m2", text: "b" }, { id: "m3", text: "c" }], meta: { result_count: 3, next_token: "tok2" } };
+    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify(page1), { status: 200 }));
+
+    const tc = makeBearerClient();
+    const result = await tc.getMentionsCount("123", { count: 2 });
+
+    expect(result.data).toHaveLength(2);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("TwitterClient.getDmEvents", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    fetchSpy = vi.spyOn(global, "fetch");
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("calls GET /2/dm_events with OAuth1.0a", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: [{ id: "e1", text: "hello DM", event_type: "MessageCreate" }],
+          meta: { result_count: 1 },
+        }),
+        { status: 200 },
+      ),
+    );
+
+    const tc = makeClient();
+    const result = await tc.getDmEvents();
+
+    expect(result.data?.[0].id).toBe("e1");
+    expect(result.meta.result_count).toBe(1);
+
+    const url = String(fetchSpy.mock.calls[0][0]);
+    expect(url).toContain("/2/dm_events");
+
+    const headers = (fetchSpy.mock.calls[0][1]?.headers ?? {}) as Record<string, string>;
+    expect(headers["Authorization"] ?? headers["authorization"]).toMatch(/^OAuth /);
+  });
+
+  it("passes maxResults and paginationToken", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ data: [], meta: { result_count: 0 } }), { status: 200 }),
+    );
+    const tc = makeClient();
+    await tc.getDmEvents({ maxResults: 25, paginationToken: "pageXYZ" });
+    const url = String(fetchSpy.mock.calls[0][0]);
+    expect(url).toContain("max_results=25");
+    expect(url).toContain("pagination_token=pageXYZ");
+  });
+
+  it("throws with 'Requires Elevated/paid tier access' on 403", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ title: "Forbidden", detail: "Access denied" }), { status: 403 }),
+    );
+    const tc = makeClient();
+    await expect(tc.getDmEvents()).rejects.toThrow(/Requires Elevated\/paid tier access/);
+  });
+
+  it("throws with 'Requires Elevated/paid tier access' on 401", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response("Unauthorized", { status: 401 }),
+    );
+    const tc = makeClient();
+    await expect(tc.getDmEvents()).rejects.toThrow(/Requires Elevated\/paid tier access/);
+  });
+});
+
+// --- getDmEvents additional tests (P1/P3) ---
+describe("TwitterClient.getDmEvents - dm_event.fields and params", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    fetchSpy = vi.spyOn(global, "fetch");
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ data: [], meta: { result_count: 0 } }), { status: 200 }),
+    );
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("includes dm_event.fields with sender_id, created_at, dm_conversation_id by default", async () => {
+    const tc = makeClient();
+    await tc.getDmEvents();
+    const url = String(fetchSpy.mock.calls[0][0]);
+    expect(url).toContain("dm_event.fields=");
+    expect(url).toContain("sender_id");
+    expect(url).toContain("created_at");
+    expect(url).toContain("dm_conversation_id");
+  });
+
+  it("allows caller to override dm_event.fields via opts", async () => {
+    const tc = makeClient();
+    await tc.getDmEvents({ dmEventFields: "id,text" });
+    const url = String(fetchSpy.mock.calls[0][0]);
+    expect(url).toContain("dm_event.fields=id%2Ctext");
+  });
+
+  it("includes event_types query param when specified", async () => {
+    const tc = makeClient();
+    await tc.getDmEvents({ eventTypes: "MessageCreate" });
+    const url = String(fetchSpy.mock.calls[0][0]);
+    expect(url).toContain("event_types=MessageCreate");
+  });
+
+  it("includes dm_conversation_id query param when specified", async () => {
+    const tc = makeClient();
+    await tc.getDmEvents({ dmConversationId: "conv-abc123" });
+    const url = String(fetchSpy.mock.calls[0][0]);
+    expect(url).toContain("dm_conversation_id=conv-abc123");
+  });
+
+  it("includes Elevated hint on 403 with retry-after annotation", async () => {
+    // When retry-after header is present, error msg is "X API error 403 (retry-after: 60s): ..."
+    // The replace regex /^X API error (401|403):/ would NOT match this format — test drives the fix
+    fetchSpy.mockResolvedValue(
+      new Response(
+        JSON.stringify({ title: "Forbidden", detail: "Access denied" }),
+        {
+          status: 403,
+          headers: { "retry-after": "60" },
+        },
+      ),
+    );
+    const tc = makeClient();
+    const err = await tc.getDmEvents().catch((e) => e);
+    expect(err.message).toMatch(/Requires Elevated\/paid tier access/);
+    // Hint must appear even though message starts with "X API error 403 (retry-after: 60s):"
+    expect(err.message).toContain("retry-after");
+  });
+
+  it("includes Elevated hint on 401 with retry-after annotation in message", async () => {
+    // Simulate error message that looks like "X API error 403 (retry-after: 60s): ..."
+    fetchSpy.mockResolvedValue(
+      new Response("Unauthorized with retry-after: 60s", { status: 401 }),
+    );
+    const tc = makeClient();
+    await expect(tc.getDmEvents()).rejects.toThrow(/Requires Elevated\/paid tier access/);
   });
 });

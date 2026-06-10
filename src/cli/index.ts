@@ -74,6 +74,7 @@ function buildPostInput(opts: {
   text: string;
   url?: string;
   replyTo?: string;
+  quoteTweetId?: string;
   maxLength?: number;
   lengthCheck?: boolean;
 }): Parameters<TwitterClient["postTweet"]>[0] {
@@ -81,6 +82,7 @@ function buildPostInput(opts: {
     text: opts.text,
     url: opts.url,
     replyTo: opts.replyTo,
+    quoteTweetId: opts.quoteTweetId,
   };
 
   if (opts.maxLength !== undefined) {
@@ -152,21 +154,39 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
     .option("--to <date>", "End date (YYYY-MM-DD)")
     .option("--exclude <handles>", "Exclude handles (comma-separated)")
     .option("--count <n>", "Target number of posts to collect (1-1000)", parseCount)
+    .option("--raw", "Output raw X API v2 response (skip LLM formatting)")
     .action(async (query, opts) => {
       try {
-        const client = getClient();
         const mode = getOutputMode();
-        const result = await client.search(query, {
-          fromDate: opts.from,
-          toDate: opts.to,
-          excludeHandles: opts.exclude?.split(","),
-          count: opts.count,
-        });
-
-        if (mode === "json") {
-          jsonOutput(result);
+        if (opts.raw) {
+          const tc = getTwitterClient();
+          if (opts.exclude) {
+            process.stderr.write("Warning: --exclude is not supported with --raw and will be ignored.\n");
+          }
+          const rawMaxResults = opts.count !== undefined ? Math.min(opts.count, 100) : undefined;
+          if (opts.count !== undefined && opts.count > 100) {
+            process.stderr.write("Warning: max_results is capped at 100 for --raw mode.\n");
+          }
+          const result = await tc.searchRecent(query, {
+            startTime: opts.from ? opts.from + "T00:00:00Z" : undefined,
+            endTime: opts.to ? opts.to + "T23:59:59Z" : undefined,
+            maxResults: rawMaxResults,
+          });
+          console.log(JSON.stringify(result, null, 2));
         } else {
-          console.log(result.text);
+          const client = getClient();
+          const result = await client.search(query, {
+            fromDate: opts.from,
+            toDate: opts.to,
+            excludeHandles: opts.exclude?.split(","),
+            count: opts.count,
+          });
+
+          if (mode === "json") {
+            jsonOutput(result);
+          } else {
+            console.log(result.text);
+          }
         }
       } catch (err: any) {
         console.error(`Error: ${err.message}`);
@@ -305,6 +325,74 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
             formatTimelineOutput(result.data);
             if (result.meta?.next_token) {
               console.log(`\n(next page: --pagination-token ${result.meta.next_token})`);
+            }
+          }
+        } catch (err: any) {
+          console.error(`Error: ${err.message}`);
+          process.exit(1);
+        }
+      },
+    );
+
+
+  // --- mentions ---
+  program
+    .command("mentions <user>")
+    .description("Get mentions of a user via X API v2 GET /2/users/:id/mentions")
+    .option("--tweet-fields <csv>", "Tweet fields (comma-separated)", parseCsv)
+    .option("--max-results <n>", "Max results per page (5-100)", parsePositiveInteger)
+    .option("--pagination-token <token>", "Pagination token for next page")
+    .option("--count <n>", "Target number of mentions to collect (1-1000, multi-page)", parseCount)
+    .option("--auth <mode>", "Auth mode: bearer | oauth1", "bearer")
+    .action(
+      async (
+        user: string,
+        opts: {
+          tweetFields?: string[];
+          maxResults?: number;
+          paginationToken?: string;
+          count?: number;
+          auth?: string;
+        },
+      ) => {
+        try {
+          const tc = getTwitterClient();
+          const mode = getOutputMode();
+          const authMode = (opts.auth === "oauth1" ? "oauth1" : "bearer") as "bearer" | "oauth1";
+
+          let userId: string;
+          let resolvedUser: { id: string; username: string; name?: string } | undefined;
+          if (isNumericId(user)) {
+            userId = user;
+          } else {
+            const username = stripAt(user);
+            const lookup = await tc.getUserByUsername(username, { auth: authMode });
+            userId = lookup.data.id;
+            resolvedUser = { id: lookup.data.id, username: lookup.data.username ?? username, name: lookup.data.name };
+          }
+
+          const result = opts.count
+            ? await tc.getMentionsCount(userId, {
+                count: opts.count,
+                tweetFields: opts.tweetFields,
+                maxResults: opts.maxResults,
+                auth: authMode,
+              })
+            : await tc.getMentions(userId, {
+                tweetFields: opts.tweetFields,
+                maxResults: opts.maxResults,
+                paginationToken: opts.paginationToken,
+                auth: authMode,
+              });
+
+          if (mode === "json") {
+            jsonOutput({ resolved_user: resolvedUser, ...result });
+          } else {
+            console.log(`Mentions: ${result.meta?.result_count ?? result.data?.length ?? 0} tweets`);
+            formatTimelineOutput(result.data ?? []);
+            if (result.meta?.next_token) {
+              console.log(`
+(next page: --pagination-token ${result.meta.next_token})`);
             }
           }
         } catch (err: any) {
@@ -536,6 +624,54 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
       }
     });
 
+  // --- dm-history (D3) ---
+  program
+    .command("dm-history")
+    .description("Get DM conversation history via X API v2 GET /2/dm_events (requires OAuth1.0a with Elevated/paid tier)")
+    .option("--max-results <n>", "Max results per page (1-100)", parsePositiveInteger)
+    .option("--pagination-token <token>", "Pagination token for next page")
+    .option("--dm-conversation-id <id>", "Filter by DM conversation ID")
+    .option("--event-types <types>", "Filter by event types (comma-separated, e.g. MessageCreate)")
+    .action(
+      async (opts: {
+        maxResults?: number;
+        paginationToken?: string;
+        dmConversationId?: string;
+        eventTypes?: string;
+      }) => {
+        try {
+          const tc = getTwitterClient();
+          const mode = getOutputMode();
+          const result = await tc.getDmEvents({
+            maxResults: opts.maxResults,
+            paginationToken: opts.paginationToken,
+            dmConversationId: opts.dmConversationId,
+            eventTypes: opts.eventTypes,
+          });
+
+          if (mode === "json") {
+            jsonOutput(result);
+          } else {
+            const count = result.meta?.result_count ?? result.data?.length ?? 0;
+            console.log(`DM events: ${count}`);
+            for (const event of result.data ?? []) {
+              const ts = event.created_at ?? "?";
+              const sender = event.sender_id ?? "?";
+              const conv = event.dm_conversation_id ?? "?";
+              console.log(`  [${ts}] sender=${sender} conv=${conv}: ${event.text ?? "(no text)"}`);
+            }
+            if (result.meta?.next_token) {
+              console.log(`
+(next page: --pagination-token ${result.meta.next_token})`);
+            }
+          }
+        } catch (err: any) {
+          console.error(`Error: ${err.message}`);
+          process.exit(1);
+        }
+      },
+    );
+
   // --- post ---
   program
     .command("post")
@@ -546,6 +682,7 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
     )
     .option("--url <string>", "Attach a URL (appended to the end of the body with a newline)")
     .option("--reply-to <tweet-id>", "Reply target tweet ID")
+    .option("--quote-tweet-id <tweet-id>", "Quote target tweet ID")
     .option(
       "--max-length <number>",
       `Override the local weighted character limit (default: ${TWEET_MAX_LENGTH})`,
@@ -558,6 +695,7 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
         text: string;
         url?: string;
         replyTo?: string;
+        quoteTweetId?: string;
         maxLength?: number;
         lengthCheck?: boolean;
         dryRun?: boolean;

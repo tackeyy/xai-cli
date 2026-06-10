@@ -161,3 +161,18 @@ export interface TwitterConversationResponse {
     partial: boolean;
   };
 }
+
+export interface TwitterDmEvent {
+  id: string;
+  text?: string;
+  event_type: string;
+  created_at?: string;
+  sender_id?: string;
+  dm_conversation_id?: string;
+  attachments?: Record<string, unknown>;
+}
+
+export interface TwitterDmEventsResponse {
+  data?: TwitterDmEvent[];
+  meta?: TwitterMeta;
+}
