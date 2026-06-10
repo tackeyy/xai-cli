@@ -530,6 +530,54 @@ export class TwitterClient {
     return this.normalizeTweetResponse(response);
   }
 
+  async getMentionsCount(
+    userId: string,
+    opts: {
+      count: number;
+      tweetFields?: string[];
+      maxResults?: number;
+      auth?: "bearer" | "oauth1";
+    },
+  ): Promise<TwitterUserTimelineResponse> {
+    this.validateCount(opts.count);
+    const allData: TwitterTweet[] = [];
+    const seenTweetIds = new Set<string>();
+    let includes: TwitterIncludes = {};
+    let paginationToken: string | undefined;
+    let partial = false;
+
+    do {
+      const remaining = opts.count - allData.length;
+      const pageSize = Math.min(opts.maxResults ?? 100, remaining);
+      const res = await this.getMentions(userId, {
+        tweetFields: opts.tweetFields,
+        maxResults: pageSize,
+        paginationToken,
+        auth: opts.auth,
+      });
+
+      for (const tweet of res.data ?? []) {
+        if (seenTweetIds.has(tweet.id)) continue;
+        seenTweetIds.add(tweet.id);
+        allData.push(tweet);
+        if (allData.length >= opts.count) break;
+      }
+      includes = this.mergeIncludes(includes, res.includes);
+      paginationToken = res.meta?.next_token;
+    } while (paginationToken && allData.length < opts.count);
+
+    if (!paginationToken && allData.length < opts.count) {
+      partial = true;
+    }
+
+    const data = allData.slice(0, opts.count);
+    return {
+      data,
+      includes: Object.keys(includes).length > 0 ? includes : undefined,
+      meta: { result_count: data.length, requested_count: opts.count, partial },
+    };
+  }
+
   // --- Bookmarks ---
 
   async getBookmarks(

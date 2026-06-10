@@ -1345,6 +1345,42 @@ describe("TwitterClient.getMentions", () => {
   });
 });
 
+describe("TwitterClient.getMentionsCount", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    fetchSpy = vi.spyOn(global, "fetch");
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("collects multiple pages until count is reached", async () => {
+    const page1 = { data: [{ id: "m1", text: "a" }, { id: "m2", text: "b" }], meta: { result_count: 2, next_token: "tok2" } };
+    const page2 = { data: [{ id: "m3", text: "c" }], meta: { result_count: 1 } };
+    fetchSpy
+      .mockResolvedValueOnce(new Response(JSON.stringify(page1), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(page2), { status: 200 }));
+
+    const tc = makeBearerClient();
+    const result = await tc.getMentionsCount("123", { count: 3 });
+
+    expect(result.data).toHaveLength(3);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(result.meta.result_count).toBe(3);
+  });
+
+  it("stops early when count is satisfied within first page", async () => {
+    const page1 = { data: [{ id: "m1", text: "a" }, { id: "m2", text: "b" }, { id: "m3", text: "c" }], meta: { result_count: 3, next_token: "tok2" } };
+    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify(page1), { status: 200 }));
+
+    const tc = makeBearerClient();
+    const result = await tc.getMentionsCount("123", { count: 2 });
+
+    expect(result.data).toHaveLength(2);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("TwitterClient.getDmEvents", () => {
   let fetchSpy: ReturnType<typeof vi.spyOn>;
   beforeEach(() => {

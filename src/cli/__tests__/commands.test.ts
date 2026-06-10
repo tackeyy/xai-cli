@@ -135,6 +135,10 @@ function createMockTwitterClient(): TwitterClient {
       data: [{ id: "m1", text: "@me hi", like_count: null, retweet_count: null, reply_count: null, quote_count: null, bookmark_count: null, view_count: null }],
       meta: { result_count: 1 },
     }),
+    getMentionsCount: vi.fn().mockResolvedValue({
+      data: [{ id: "m1", text: "@me hi" }, { id: "m2", text: "@me hey" }],
+      meta: { result_count: 2, requested_count: 2, partial: false },
+    }),
     getDmEvents: vi.fn().mockResolvedValue({
       data: [{ id: "e1", text: "hello DM", event_type: "MessageCreate", sender_id: "42", created_at: "2026-01-01T00:00:00.000Z", dm_conversation_id: "conv99" }],
       meta: { result_count: 1 },
@@ -423,6 +427,15 @@ describe("CLI commands", () => {
       const parsed = JSON.parse(logSpy.mock.calls[0][0] as string);
       expect(parsed).toHaveProperty("data");
       expect(parsed.meta.result_count).toBe(1);
+    });
+
+    it("--count calls getMentionsCount instead of getMentions", async () => {
+      const { twitterClient } = await run(["mentions", "@zeimu_ai", "--count", "2"]);
+      expect(twitterClient.getMentionsCount).toHaveBeenCalledWith(
+        "12345",
+        expect.objectContaining({ count: 2 }),
+      );
+      expect(twitterClient.getMentions).not.toHaveBeenCalled();
     });
   });
 

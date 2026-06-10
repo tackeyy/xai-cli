@@ -338,6 +338,7 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
     .option("--tweet-fields <csv>", "Tweet fields (comma-separated)", parseCsv)
     .option("--max-results <n>", "Max results per page (5-100)", parsePositiveInteger)
     .option("--pagination-token <token>", "Pagination token for next page")
+    .option("--count <n>", "Target number of mentions to collect (1-1000, multi-page)", parseCount)
     .option("--auth <mode>", "Auth mode: bearer | oauth1", "bearer")
     .action(
       async (
@@ -346,6 +347,7 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
           tweetFields?: string[];
           maxResults?: number;
           paginationToken?: string;
+          count?: number;
           auth?: string;
         },
       ) => {
@@ -365,12 +367,19 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
             resolvedUser = { id: lookup.data.id, username: lookup.data.username ?? username, name: lookup.data.name };
           }
 
-          const result = await tc.getMentions(userId, {
-            tweetFields: opts.tweetFields,
-            maxResults: opts.maxResults,
-            paginationToken: opts.paginationToken,
-            auth: authMode,
-          });
+          const result = opts.count
+            ? await tc.getMentionsCount(userId, {
+                count: opts.count,
+                tweetFields: opts.tweetFields,
+                maxResults: opts.maxResults,
+                auth: authMode,
+              })
+            : await tc.getMentions(userId, {
+                tweetFields: opts.tweetFields,
+                maxResults: opts.maxResults,
+                paginationToken: opts.paginationToken,
+                auth: authMode,
+              });
 
           if (mode === "json") {
             jsonOutput({ resolved_user: resolvedUser, ...result });
