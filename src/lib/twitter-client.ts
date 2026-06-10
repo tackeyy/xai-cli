@@ -93,6 +93,7 @@ const MENTIONS_TWEET_FIELDS = [
 ];
 const DEFAULT_USER_PROFILE_FIELDS = ["description", "created_at", "verified", "public_metrics"];
 const DM_STATUS_USER_FIELDS = ["receives_your_dm", "connection_status", "protected", "verified"];
+const DM_EVENT_DEFAULT_FIELDS = "id,event_type,text,sender_id,created_at,dm_conversation_id";
 const DEFAULT_TWEET_LOOKUP_FIELDS = [
   "id",
   "text",
@@ -1040,6 +1041,7 @@ export class TwitterClient {
       paginationToken?: string;
       dmConversationId?: string;
       eventTypes?: string;
+      dmEventFields?: string;
     },
   ): Promise<TwitterDmEventsResponse> {
     this.requireOAuth1Credentials();
@@ -1049,6 +1051,7 @@ export class TwitterClient {
     if (opts?.paginationToken) query.pagination_token = opts.paginationToken;
     if (opts?.dmConversationId) query.dm_conversation_id = opts.dmConversationId;
     if (opts?.eventTypes) query.event_types = opts.eventTypes;
+    query["dm_event.fields"] = opts?.dmEventFields ?? DM_EVENT_DEFAULT_FIELDS;
 
     try {
       return await this.get<TwitterDmEventsResponse>("/2/dm_events", {

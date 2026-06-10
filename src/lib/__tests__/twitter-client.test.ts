@@ -1441,3 +1441,71 @@ describe("TwitterClient.getDmEvents", () => {
     await expect(tc.getDmEvents()).rejects.toThrow(/Requires Elevated\/paid tier access/);
   });
 });
+
+// --- getDmEvents additional tests (P1/P3) ---
+describe("TwitterClient.getDmEvents - dm_event.fields and params", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    fetchSpy = vi.spyOn(global, "fetch");
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ data: [], meta: { result_count: 0 } }), { status: 200 }),
+    );
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("includes dm_event.fields with sender_id, created_at, dm_conversation_id by default", async () => {
+    const tc = makeClient();
+    await tc.getDmEvents();
+    const url = String(fetchSpy.mock.calls[0][0]);
+    expect(url).toContain("dm_event.fields=");
+    expect(url).toContain("sender_id");
+    expect(url).toContain("created_at");
+    expect(url).toContain("dm_conversation_id");
+  });
+
+  it("allows caller to override dm_event.fields via opts", async () => {
+    const tc = makeClient();
+    await tc.getDmEvents({ dmEventFields: "id,text" });
+    const url = String(fetchSpy.mock.calls[0][0]);
+    expect(url).toContain("dm_event.fields=id%2Ctext");
+  });
+
+  it("includes event_types query param when specified", async () => {
+    const tc = makeClient();
+    await tc.getDmEvents({ eventTypes: "MessageCreate" });
+    const url = String(fetchSpy.mock.calls[0][0]);
+    expect(url).toContain("event_types=MessageCreate");
+  });
+
+  it("includes dm_conversation_id query param when specified", async () => {
+    const tc = makeClient();
+    await tc.getDmEvents({ dmConversationId: "conv-abc123" });
+    const url = String(fetchSpy.mock.calls[0][0]);
+    expect(url).toContain("dm_conversation_id=conv-abc123");
+  });
+
+  it("includes Elevated hint on 403 with retry-after annotation", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(
+        JSON.stringify({ title: "Forbidden", detail: "Access denied" }),
+        {
+          status: 403,
+          headers: { "x-rate-limit-reset": "60" },
+        },
+      ),
+    );
+    const tc = makeClient();
+    await expect(tc.getDmEvents()).rejects.toThrow(/Requires Elevated\/paid tier access/);
+  });
+
+  it("includes Elevated hint on 401 with retry-after annotation in message", async () => {
+    // Simulate error message that looks like "X API error 403 (retry-after: 60s): ..."
+    fetchSpy.mockResolvedValue(
+      new Response("Unauthorized with retry-after: 60s", { status: 401 }),
+    );
+    const tc = makeClient();
+    await expect(tc.getDmEvents()).rejects.toThrow(/Requires Elevated\/paid tier access/);
+  });
+});
