@@ -720,6 +720,25 @@ describe("CLI commands", () => {
       });
     });
 
+    it("passes --quote-tweet-id through to postTweet", async () => {
+      const { twitterClient } = await run([
+        "post",
+        "--text",
+        "great post",
+        "--quote-tweet-id",
+        "888777666",
+      ]);
+      expect(twitterClient.postTweet).toHaveBeenCalledWith(
+        expect.objectContaining({ quoteTweetId: "888777666" }),
+      );
+    });
+
+    it("passes --quote-tweet-id to buildPostPayload (dry-run)", async () => {
+      await run(["post", "--dry-run", "--text", "quoting", "--quote-tweet-id", "111"]);
+      const allOutput = logSpy.mock.calls.map((c) => String(c[0])).join("\n");
+      expect(allOutput).toContain("quote_tweet_id");
+    });
+
     it("passes --max-length through to postTweet", async () => {
       const { twitterClient } = await run([
         "post",
