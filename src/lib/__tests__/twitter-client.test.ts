@@ -207,6 +207,13 @@ describe("TwitterClient.buildPostPayload (dry-run helper)", () => {
     const payload = tc.buildPostPayload({ text: "あ".repeat(141), noLengthCheck: true });
     expect(payload).toEqual({ text: "あ".repeat(141) });
   });
+
+  it("adds quote_tweet_id when quoteTweetId is given", () => {
+    const tc = makeClient();
+    const payload = tc.buildPostPayload({ text: "check this", quoteTweetId: "42" });
+    expect(payload).toEqual({ text: "check this", quote_tweet_id: "42" });
+  });
+
 });
 
 // --- GET helper tests ---

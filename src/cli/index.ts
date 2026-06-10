@@ -74,6 +74,7 @@ function buildPostInput(opts: {
   text: string;
   url?: string;
   replyTo?: string;
+  quoteTweetId?: string;
   maxLength?: number;
   lengthCheck?: boolean;
 }): Parameters<TwitterClient["postTweet"]>[0] {
@@ -81,6 +82,7 @@ function buildPostInput(opts: {
     text: opts.text,
     url: opts.url,
     replyTo: opts.replyTo,
+    quoteTweetId: opts.quoteTweetId,
   };
 
   if (opts.maxLength !== undefined) {
@@ -546,6 +548,7 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
     )
     .option("--url <string>", "Attach a URL (appended to the end of the body with a newline)")
     .option("--reply-to <tweet-id>", "Reply target tweet ID")
+    .option("--quote-tweet-id <tweet-id>", "Quote target tweet ID")
     .option(
       "--max-length <number>",
       `Override the local weighted character limit (default: ${TWEET_MAX_LENGTH})`,
@@ -558,6 +561,7 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
         text: string;
         url?: string;
         replyTo?: string;
+        quoteTweetId?: string;
         maxLength?: number;
         lengthCheck?: boolean;
         dryRun?: boolean;

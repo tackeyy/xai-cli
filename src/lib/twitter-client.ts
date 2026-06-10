@@ -41,11 +41,13 @@ export interface PostTweetInput {
   replyTo?: string;
   maxLength?: number;
   noLengthCheck?: boolean;
+  quoteTweetId?: string;
 }
 
 export interface PostTweetPayload {
   text: string;
   reply?: { in_reply_to_tweet_id: string };
+  quote_tweet_id?: string;
 }
 
 export interface PostTweetResult {
@@ -999,6 +1001,9 @@ export class TwitterClient {
     const payload: PostTweetPayload = { text: combinedText };
     if (input.replyTo) {
       payload.reply = { in_reply_to_tweet_id: input.replyTo };
+    }
+    if (input.quoteTweetId) {
+      payload.quote_tweet_id = input.quoteTweetId;
     }
     return payload;
   }
