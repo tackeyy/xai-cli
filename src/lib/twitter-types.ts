@@ -213,3 +213,36 @@ export interface TwitterListMembersResponse {
 export interface DeleteTweetResult {
   deleted: boolean;
 }
+
+// --- Tweet counts (M2) ---
+
+export interface TwitterTweetCount {
+  start: string;
+  end: string;
+  tweet_count: number;
+}
+
+export interface TwitterTweetCountsResponse {
+  data: TwitterTweetCount[];
+  meta: {
+    total_tweet_count: number;
+    newest_id?: string;
+    oldest_id?: string;
+    next_token?: string;
+  };
+}
+
+// --- User search (M7) ---
+
+export interface TwitterUserSearchResponse {
+  data: TwitterUser[];
+  meta: TwitterMeta;
+}
+
+// --- Tweets lookup by ids (M1a) ---
+
+export interface TwitterTweetsLookupResponse {
+  data: TwitterTweet[];
+  includes?: TwitterIncludes;
+  meta?: TwitterMeta;
+}

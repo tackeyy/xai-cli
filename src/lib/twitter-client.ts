@@ -24,6 +24,9 @@ import type {
   TwitterListTweetsResponse,
   TwitterListMembersResponse,
   DeleteTweetResult,
+  TwitterTweetsLookupResponse,
+  TwitterTweetCountsResponse,
+  TwitterUserSearchResponse,
 } from "./twitter-types.js";
 
 export interface TwitterClientOptions {
@@ -1300,6 +1303,109 @@ export class TwitterClient {
     if (opts?.untilId) params.until_id = opts.untilId;
 
     return this.get<TwitterSearchRecentResponse>(`/2/tweets/search/recent`, {
+      auth: opts?.auth ?? "bearer",
+      query: params,
+    });
+  }
+
+  // --- Tweets bulk lookup (M1a) ---
+
+  /**
+   * Fetch up to 100 tweets by their IDs in a single request via GET /2/tweets?ids=...
+   * Supports tweet.fields, expansions, user.fields, and media.fields.
+   * Auth defaults to "bearer"; pass auth: "oauth1" for private metrics.
+   */
+  async getTweetsByIds(
+    ids: string[],
+    opts?: {
+      tweetFields?: string[];
+      expansions?: string[];
+      userFields?: string[];
+      mediaFields?: string[];
+      auth?: "bearer" | "oauth1";
+    },
+  ): Promise<TwitterTweetsLookupResponse> {
+    if (!ids || ids.length === 0) {
+      throw new Error("getTweetsByIds: ids must not be empty");
+    }
+    if (ids.length > 100) {
+      throw new Error("getTweetsByIds: maximum 100 ids per request");
+    }
+    const query: Record<string, string | undefined> = {
+      ids: ids.join(","),
+    };
+    if (opts?.tweetFields?.length) query["tweet.fields"] = opts.tweetFields.join(",");
+    if (opts?.expansions?.length) query.expansions = opts.expansions.join(",");
+    if (opts?.userFields?.length) query["user.fields"] = opts.userFields.join(",");
+    if (opts?.mediaFields?.length) query["media.fields"] = opts.mediaFields.join(",");
+
+    return this.get<TwitterTweetsLookupResponse>("/2/tweets", {
+      auth: opts?.auth ?? "bearer",
+      query,
+    });
+  }
+
+  // --- Tweet counts (M2) ---
+
+  /**
+   * Get the count of tweets matching a query in the last 7 days via GET /2/tweets/counts/recent.
+   * Supports granularity: "minute" | "hour" | "day" (default: day).
+   * Auth defaults to "bearer".
+   */
+  async getTweetCountsRecent(
+    query: string,
+    opts?: {
+      granularity?: "minute" | "hour" | "day";
+      startTime?: string;
+      endTime?: string;
+      sinceId?: string;
+      untilId?: string;
+      auth?: "bearer" | "oauth1";
+    },
+  ): Promise<TwitterTweetCountsResponse> {
+    if (!query || !query.trim()) {
+      throw new Error("getTweetCountsRecent: query must not be empty");
+    }
+    const params: Record<string, string | undefined> = { query };
+    if (opts?.granularity) params.granularity = opts.granularity;
+    if (opts?.startTime) params.start_time = opts.startTime;
+    if (opts?.endTime) params.end_time = opts.endTime;
+    if (opts?.sinceId) params.since_id = opts.sinceId;
+    if (opts?.untilId) params.until_id = opts.untilId;
+
+    return this.get<TwitterTweetCountsResponse>("/2/tweets/counts/recent", {
+      auth: opts?.auth ?? "bearer",
+      query: params,
+    });
+  }
+
+  // --- User search (M7) ---
+
+  /**
+   * Search users by query string via GET /2/users/search.
+   * Note: This endpoint may require Basic+ tier access.
+   * TODO: Confirm access tier requirement.
+   */
+  async searchUsers(
+    query: string,
+    opts?: {
+      userFields?: string[];
+      expansions?: string[];
+      maxResults?: number;
+      paginationToken?: string;
+      auth?: "bearer" | "oauth1";
+    },
+  ): Promise<TwitterUserSearchResponse> {
+    if (!query || !query.trim()) {
+      throw new Error("searchUsers: query must not be empty");
+    }
+    const params: Record<string, string | number | undefined> = { query };
+    if (opts?.userFields?.length) params["user.fields"] = opts.userFields.join(",");
+    if (opts?.expansions?.length) params.expansions = opts.expansions.join(",");
+    if (opts?.maxResults) params.max_results = opts.maxResults;
+    if (opts?.paginationToken) params.pagination_token = opts.paginationToken;
+
+    return this.get<TwitterUserSearchResponse>("/2/users/search", {
       auth: opts?.auth ?? "bearer",
       query: params,
     });

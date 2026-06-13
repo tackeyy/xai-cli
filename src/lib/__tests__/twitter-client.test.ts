@@ -2612,3 +2612,296 @@ describe("TwitterClient.validateBannerImage", () => {
     expect(() => tc.validateBannerImage(valid, "jpg")).not.toThrow();
   });
 });
+
+// ===================================================================
+// M1a: getTweetsByIds
+// ===================================================================
+
+describe("TwitterClient.getTweetsByIds", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    fetchSpy = vi.spyOn(global, "fetch");
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("calls GET /2/tweets?ids=... with bearer auth by default", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: [
+            { id: "111", text: "tweet 1" },
+            { id: "222", text: "tweet 2" },
+          ],
+        }),
+        { status: 200 },
+      ),
+    );
+
+    const tc = makeBearerClient();
+    const result = await tc.getTweetsByIds(["111", "222"]);
+
+    expect(result.data).toHaveLength(2);
+    expect(result.data[0].id).toBe("111");
+
+    const url = String(fetchSpy.mock.calls[0][0]);
+    expect(url).toContain("/2/tweets");
+    expect(url).toContain("ids=111%2C222");
+    const headers = fetchSpy.mock.calls[0][1]?.headers as Record<string, string>;
+    expect(headers["Authorization"]).toMatch(/^Bearer /);
+  });
+
+  it("sends tweet.fields when specified", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ data: [{ id: "1" }] }), { status: 200 }),
+    );
+    const tc = makeBearerClient();
+    await tc.getTweetsByIds(["1"], { tweetFields: ["created_at", "public_metrics"] });
+    const url = String(fetchSpy.mock.calls[0][0]);
+    expect(url).toContain("tweet.fields=created_at%2Cpublic_metrics");
+  });
+
+  it("sends expansions when specified", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ data: [{ id: "1" }] }), { status: 200 }),
+    );
+    const tc = makeBearerClient();
+    await tc.getTweetsByIds(["1"], { expansions: ["author_id"] });
+    const url = String(fetchSpy.mock.calls[0][0]);
+    expect(url).toContain("expansions=author_id");
+  });
+
+  it("supports oauth1 auth mode", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ data: [{ id: "1" }] }), { status: 200 }),
+    );
+    const tc = makeClient();
+    await tc.getTweetsByIds(["1"], { auth: "oauth1" });
+    const headers = fetchSpy.mock.calls[0][1]?.headers as Record<string, string>;
+    expect(headers["Authorization"]).toMatch(/^OAuth /);
+  });
+
+  it("throws on non-2xx response", async () => {
+    fetchSpy.mockResolvedValue(new Response("Forbidden", { status: 403 }));
+    const tc = makeBearerClient();
+    await expect(tc.getTweetsByIds(["1"])).rejects.toThrow(/403/);
+  });
+
+  it("throws when ids array is empty", async () => {
+    const tc = makeBearerClient();
+    await expect(tc.getTweetsByIds([])).rejects.toThrow(/ids/i);
+  });
+
+  it("caps ids at 100 and throws when over limit", async () => {
+    const tc = makeBearerClient();
+    const ids = Array.from({ length: 101 }, (_, i) => String(i + 1));
+    await expect(tc.getTweetsByIds(ids)).rejects.toThrow(/100/);
+  });
+});
+
+// ===================================================================
+// M1b: getTweetById with non_public_metrics / organic_metrics opts
+// ===================================================================
+
+describe("TwitterClient.getTweetById with metrics opts", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    fetchSpy = vi.spyOn(global, "fetch");
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("includes non_public_metrics in tweet.fields when requested via opts", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: {
+            id: "1",
+            text: "hello",
+            non_public_metrics: { impression_count: 100 },
+          },
+        }),
+        { status: 200 },
+      ),
+    );
+
+    const tc = makeClient();
+    const result = await tc.getTweetById("1", {
+      tweetFields: ["id", "text", "non_public_metrics", "organic_metrics"],
+      auth: "oauth1",
+    });
+
+    expect(result.data.id).toBe("1");
+    const url = String(fetchSpy.mock.calls[0][0]);
+    expect(url).toContain("non_public_metrics");
+    expect(url).toContain("organic_metrics");
+  });
+
+  it("existing getTweetById signature remains backward-compatible without opts", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ data: { id: "1", text: "ok" } }), { status: 200 }),
+    );
+    const tc = makeBearerClient();
+    const result = await tc.getTweetById("1");
+    expect(result.data.id).toBe("1");
+  });
+});
+
+// ===================================================================
+// M2: getTweetCountsRecent
+// ===================================================================
+
+describe("TwitterClient.getTweetCountsRecent", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    fetchSpy = vi.spyOn(global, "fetch");
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("calls GET /2/tweets/counts/recent with query param", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: [
+            { start: "2026-06-12T00:00:00.000Z", end: "2026-06-13T00:00:00.000Z", tweet_count: 42 },
+          ],
+          meta: { total_tweet_count: 42 },
+        }),
+        { status: 200 },
+      ),
+    );
+
+    const tc = makeBearerClient();
+    const result = await tc.getTweetCountsRecent("from:elonmusk");
+
+    expect(result.data).toHaveLength(1);
+    expect(result.meta.total_tweet_count).toBe(42);
+
+    const url = String(fetchSpy.mock.calls[0][0]);
+    expect(url).toContain("/2/tweets/counts/recent");
+    expect(url).toContain("query=from%3Aelonmusk");
+    const headers = fetchSpy.mock.calls[0][1]?.headers as Record<string, string>;
+    expect(headers["Authorization"]).toMatch(/^Bearer /);
+  });
+
+  it("passes granularity when specified", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ data: [], meta: { total_tweet_count: 0 } }), { status: 200 }),
+    );
+    const tc = makeBearerClient();
+    await tc.getTweetCountsRecent("hello", { granularity: "hour" });
+    const url = String(fetchSpy.mock.calls[0][0]);
+    expect(url).toContain("granularity=hour");
+  });
+
+  it("passes startTime and endTime when specified", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ data: [], meta: { total_tweet_count: 0 } }), { status: 200 }),
+    );
+    const tc = makeBearerClient();
+    await tc.getTweetCountsRecent("hello", {
+      startTime: "2026-06-01T00:00:00Z",
+      endTime: "2026-06-07T00:00:00Z",
+    });
+    const url = String(fetchSpy.mock.calls[0][0]);
+    expect(url).toContain("start_time=");
+    expect(url).toContain("end_time=");
+  });
+
+  it("throws on empty query", async () => {
+    const tc = makeBearerClient();
+    await expect(tc.getTweetCountsRecent("")).rejects.toThrow(/query/i);
+  });
+
+  it("throws on non-2xx response", async () => {
+    fetchSpy.mockResolvedValue(new Response("Unauthorized", { status: 401 }));
+    const tc = makeBearerClient();
+    await expect(tc.getTweetCountsRecent("test")).rejects.toThrow(/401/);
+  });
+});
+
+// ===================================================================
+// M7: searchUsers
+// ===================================================================
+
+describe("TwitterClient.searchUsers", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    fetchSpy = vi.spyOn(global, "fetch");
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("calls GET /2/users/search with query param", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: [
+            { id: "123", username: "elonmusk", name: "Elon Musk" },
+            { id: "456", username: "elonmusk_fan", name: "Fan" },
+          ],
+          meta: { result_count: 2 },
+        }),
+        { status: 200 },
+      ),
+    );
+
+    const tc = makeBearerClient();
+    const result = await tc.searchUsers("elonmusk");
+
+    expect(result.data).toHaveLength(2);
+    expect(result.data[0].id).toBe("123");
+
+    const url = String(fetchSpy.mock.calls[0][0]);
+    expect(url).toContain("/2/users/search");
+    expect(url).toContain("query=elonmusk");
+    const headers = fetchSpy.mock.calls[0][1]?.headers as Record<string, string>;
+    expect(headers["Authorization"]).toMatch(/^Bearer /);
+  });
+
+  it("passes user.fields when specified", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ data: [], meta: { result_count: 0 } }), { status: 200 }),
+    );
+    const tc = makeBearerClient();
+    await tc.searchUsers("test", { userFields: ["username", "public_metrics"] });
+    const url = String(fetchSpy.mock.calls[0][0]);
+    expect(url).toContain("user.fields=username%2Cpublic_metrics");
+  });
+
+  it("passes maxResults when specified", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ data: [], meta: { result_count: 0 } }), { status: 200 }),
+    );
+    const tc = makeBearerClient();
+    await tc.searchUsers("test", { maxResults: 10 });
+    const url = String(fetchSpy.mock.calls[0][0]);
+    expect(url).toContain("max_results=10");
+  });
+
+  it("supports oauth1 auth mode", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ data: [], meta: { result_count: 0 } }), { status: 200 }),
+    );
+    const tc = makeClient();
+    await tc.searchUsers("test", { auth: "oauth1" });
+    const headers = fetchSpy.mock.calls[0][1]?.headers as Record<string, string>;
+    expect(headers["Authorization"]).toMatch(/^OAuth /);
+  });
+
+  it("throws on empty query", async () => {
+    const tc = makeBearerClient();
+    await expect(tc.searchUsers("")).rejects.toThrow(/query/i);
+  });
+
+  it("throws on non-2xx response", async () => {
+    fetchSpy.mockResolvedValue(new Response("Forbidden", { status: 403 }));
+    const tc = makeBearerClient();
+    await expect(tc.searchUsers("test")).rejects.toThrow(/403/);
+  });
+});

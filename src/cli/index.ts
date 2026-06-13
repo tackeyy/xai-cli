@@ -533,6 +533,10 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
     .description("Get tweet content from URL (LLM-text by default; --raw for X API v2 structured data; --image for Vision OCR)")
     .option("--raw", "Fetch via X API v2 GET /2/tweets/:id (structured JSON)")
     .option("--image", "Analyse attached images via xAI Vision (grok-4.3). Falls back to text-only on error.")
+    .option(
+      "--metrics",
+      "Include non_public_metrics and organic_metrics (--raw only; requires oauth1 auth). Note: 要Basic+ティアの可能性",
+    )
     .option("--tweet-fields <csv>", "Tweet fields (--raw only)", parseCsv)
     .option("--expansions <csv>", "Expansions (--raw only)", parseCsv)
     .option("--user-fields <csv>", "User fields for expansions (--raw only)", parseCsv)
@@ -544,6 +548,7 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
         opts: {
           raw?: boolean;
           image?: boolean;
+          metrics?: boolean;
           tweetFields?: string[];
           expansions?: string[];
           userFields?: string[];
@@ -554,10 +559,19 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
         try {
           const mode = getOutputMode();
           if (opts.raw) {
-            const auth = (opts.auth ?? "bearer") as "bearer" | "oauth1";
+            // When --metrics is specified, default to oauth1 and add metric fields
+            const auth = (opts.metrics ? "oauth1" : (opts.auth ?? "bearer")) as "bearer" | "oauth1";
             const tc = getTwitterClient();
+
+            let tweetFields = opts.tweetFields;
+            if (opts.metrics) {
+              const base = tweetFields ?? ["id", "text", "public_metrics"];
+              const extras = ["non_public_metrics", "organic_metrics"];
+              tweetFields = [...new Set([...base, ...extras])];
+            }
+
             const result = await tc.getTweetById(url, {
-              tweetFields: opts.tweetFields,
+              tweetFields,
               expansions: opts.expansions,
               userFields: opts.userFields,
               mediaFields: opts.mediaFields,
@@ -1959,6 +1973,164 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
             jsonOutput({ removed: true });
           } else {
             console.log("Banner removed successfully");
+          }
+        } catch (err: any) {
+          console.error(`Error: ${err.message}`);
+          process.exit(1);
+        }
+      },
+    );
+
+  // --- tweets (M1a): GET /2/tweets?ids=... bulk lookup ---
+  program
+    .command("tweets <ids...>")
+    .description("Fetch multiple tweets by ID (space-separated or single comma-separated string, max 100)")
+    .option("--tweet-fields <csv>", "Tweet fields (comma-separated)", parseCsv)
+    .option("--expansions <csv>", "Expansions (comma-separated)", parseCsv)
+    .option("--user-fields <csv>", "User fields for expansions (comma-separated)", parseCsv)
+    .option("--media-fields <csv>", "Media fields (comma-separated)", parseCsv)
+    .option("--auth <mode>", "Auth mode: bearer | oauth1", "bearer")
+    .action(
+      async (
+        ids: string[],
+        opts: {
+          tweetFields?: string[];
+          expansions?: string[];
+          userFields?: string[];
+          mediaFields?: string[];
+          auth?: string;
+        },
+      ) => {
+        try {
+          const tc = getTwitterClient();
+          const mode = getOutputMode();
+          const authMode = (opts.auth === "oauth1" ? "oauth1" : "bearer") as "bearer" | "oauth1";
+
+          // Support single arg "111,222,333" as well as multiple args "111" "222" "333"
+          const resolvedIds = ids.length === 1 && ids[0].includes(",")
+            ? ids[0].split(",").map((s) => s.trim()).filter(Boolean)
+            : ids;
+
+          const result = await tc.getTweetsByIds(resolvedIds, {
+            tweetFields: opts.tweetFields,
+            expansions: opts.expansions,
+            userFields: opts.userFields,
+            mediaFields: opts.mediaFields,
+            auth: authMode,
+          });
+
+          if (mode === "json") {
+            jsonOutput(result);
+          } else {
+            console.log(`Tweets: ${result.data?.length ?? 0}`);
+            for (const tweet of result.data ?? []) {
+              const textSnippet = (tweet.text ?? "").slice(0, 100).replace(/\n/g, " ");
+              console.log(`${tweet.id}\t${tweet.created_at ?? ""}\t${textSnippet}`);
+            }
+          }
+        } catch (err: any) {
+          console.error(`Error: ${err.message}`);
+          process.exit(1);
+        }
+      },
+    );
+
+  // --- counts (M2): GET /2/tweets/counts/recent ---
+  program
+    .command("counts <query>")
+    .description("Get tweet counts matching a query in the last 7 days (GET /2/tweets/counts/recent)")
+    .option("--granularity <granularity>", "Bucket size: minute | hour | day", "day")
+    .option("--from <time>", "Start time (ISO 8601)")
+    .option("--to <time>", "End time (ISO 8601)")
+    .option("--since-id <id>", "Count tweets after this tweet ID")
+    .option("--until-id <id>", "Count tweets before this tweet ID")
+    .action(
+      async (
+        query: string,
+        opts: {
+          granularity?: string;
+          from?: string;
+          to?: string;
+          sinceId?: string;
+          untilId?: string;
+        },
+      ) => {
+        try {
+          const tc = getTwitterClient();
+          const mode = getOutputMode();
+          const granularity = (["minute", "hour", "day"].includes(opts.granularity ?? "")
+            ? opts.granularity
+            : "day") as "minute" | "hour" | "day" | undefined;
+
+          const result = await tc.getTweetCountsRecent(query, {
+            granularity,
+            startTime: opts.from,
+            endTime: opts.to,
+            sinceId: opts.sinceId,
+            untilId: opts.untilId,
+          });
+
+          if (mode === "json") {
+            jsonOutput(result);
+          } else {
+            console.log(`Total tweets: ${result.meta.total_tweet_count}`);
+            for (const entry of result.data ?? []) {
+              console.log(`${entry.start}\t${entry.end}\t${entry.tweet_count}`);
+            }
+          }
+        } catch (err: any) {
+          console.error(`Error: ${err.message}`);
+          process.exit(1);
+        }
+      },
+    );
+
+  // --- user-search (M7): GET /2/users/search ---
+  // Note: 要Basic+ティアの可能性 (Basic+ tier may be required for this endpoint)
+  program
+    .command("user-search <query>")
+    .description(
+      "Search users by query (GET /2/users/search). Note: May require Basic+ tier access.",
+    )
+    .option("--user-fields <csv>", "User fields (comma-separated)", parseCsv)
+    .option("--expansions <csv>", "Expansions (comma-separated)", parseCsv)
+    .option("--max-results <n>", "Max results per page", parsePositiveInteger)
+    .option("--pagination-token <token>", "Pagination token")
+    .option("--auth <mode>", "Auth mode: bearer | oauth1", "bearer")
+    .action(
+      async (
+        query: string,
+        opts: {
+          userFields?: string[];
+          expansions?: string[];
+          maxResults?: number;
+          paginationToken?: string;
+          auth?: string;
+        },
+      ) => {
+        try {
+          const tc = getTwitterClient();
+          const mode = getOutputMode();
+          const authMode = (opts.auth === "oauth1" ? "oauth1" : "bearer") as "bearer" | "oauth1";
+
+          const result = await tc.searchUsers(query, {
+            userFields: opts.userFields,
+            expansions: opts.expansions,
+            maxResults: opts.maxResults,
+            paginationToken: opts.paginationToken,
+            auth: authMode,
+          });
+
+          if (mode === "json") {
+            jsonOutput(result);
+          } else {
+            console.log(`Users: ${result.data?.length ?? 0}`);
+            for (const user of result.data ?? []) {
+              console.log(`@${user.username ?? "?"}\t${user.name ?? ""}\t${user.id}`);
+            }
+            if (result.meta?.next_token) {
+              console.log(`\n(next page: --pagination-token ${result.meta.next_token})`);
+            }
           }
         } catch (err: any) {
           console.error(`Error: ${err.message}`);
