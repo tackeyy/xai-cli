@@ -23,6 +23,13 @@ function createMockTwitterClient(): TwitterClient {
       url: "https://x.com/i/status/111222333",
       posted_at: "2026-04-11T00:00:00.000Z",
     }),
+    updateProfile: vi.fn().mockResolvedValue({
+      screenName: "3chhe",
+      name: "Yusuke",
+      description: "new bio",
+      url: "https://example.com",
+      location: "Tokyo",
+    }),
     getUserByUsername: vi.fn().mockResolvedValue({
       data: { id: "12345", username: "zeimu_ai", name: "Zeimu AI" },
     }),
@@ -725,6 +732,53 @@ describe("CLI commands", () => {
         new Error("X API error 403: Forbidden"),
       );
       await run(["reply", "123456789", "テスト"], undefined, tc);
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("X API error 403"));
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    });
+  });
+
+  describe("update-profile", () => {
+    it("calls twitterClient.updateProfile with mapped fields", async () => {
+      const { twitterClient } = await run(["update-profile", "--bio", "new bio"]);
+      expect(twitterClient.updateProfile).toHaveBeenCalledWith(
+        expect.objectContaining({ bio: "new bio" }),
+      );
+    });
+
+    it("outputs confirmation in human mode", async () => {
+      await run(["update-profile", "--bio", "new bio"]);
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Profile updated"));
+    });
+
+    it("outputs JSON in json mode", async () => {
+      await run(["--json", "update-profile", "--name", "Yusuke"]);
+      const parsed = JSON.parse(logSpy.mock.calls[0][0]);
+      expect(parsed.screenName).toBe("3chhe");
+    });
+
+    it("does NOT call updateProfile in dry-run mode", async () => {
+      const { twitterClient } = await run(["update-profile", "--dry-run", "--bio", "hi"]);
+      expect(twitterClient.updateProfile).not.toHaveBeenCalled();
+    });
+
+    it("prints endpoint in dry-run mode", async () => {
+      await run(["update-profile", "--dry-run", "--bio", "hi"]);
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("[dry-run]"));
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("account/update_profile.json"));
+    });
+
+    it("errors and exits 1 when no fields given (dry-run validation)", async () => {
+      await run(["update-profile", "--dry-run"]);
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("at least one"));
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    });
+
+    it("prints error and exit 1 on updateProfile failure", async () => {
+      const tc = createMockTwitterClient();
+      (tc.updateProfile as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new Error("X API error 403: Forbidden Requires Elevated/paid tier access."),
+      );
+      await run(["update-profile", "--bio", "x"], undefined, tc);
       expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("X API error 403"));
       expect(exitSpy).toHaveBeenCalledWith(1);
     });

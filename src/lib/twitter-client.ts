@@ -58,6 +58,22 @@ export interface PostTweetResult {
   posted_at: string;
 }
 
+export interface UpdateProfileInput {
+  name?: string;
+  /** Profile bio. Maps to the v1.1 `description` field. */
+  bio?: string;
+  url?: string;
+  location?: string;
+}
+
+export interface UpdateProfileResult {
+  screenName?: string;
+  name?: string;
+  description?: string;
+  url?: string;
+  location?: string;
+}
+
 export class TweetTooLongError extends Error {
   constructor(public readonly length: number, public readonly maxLength: number) {
     super(
@@ -1164,6 +1180,88 @@ export class TwitterClient {
         text: data.data.text,
         url: `https://x.com/i/status/${data.data.id}`,
         posted_at: postedAt,
+      };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  // --- Profile update (v1.1 account/update_profile) ---
+
+  /**
+   * Validate inputs and build the form params for account/update_profile.
+   * Public so the CLI dry-run can preview the request without sending it.
+   */
+  buildProfileParams(input: UpdateProfileInput): Record<string, string> {
+    const limits: Array<[keyof UpdateProfileInput, string, number]> = [
+      ["name", "name", 50],
+      ["bio", "description", 160],
+      ["url", "url", 100],
+      ["location", "location", 30],
+    ];
+    const params: Record<string, string> = {};
+    for (const [key, field, max] of limits) {
+      const value = input[key];
+      if (value === undefined) continue;
+      const len = [...value].length;
+      if (len > max) {
+        throw new Error(`${key} exceeds ${max} characters (got ${len}).`);
+      }
+      params[field] = value;
+    }
+    if (Object.keys(params).length === 0) {
+      throw new Error("at least one of name / bio / url / location must be provided");
+    }
+    return params;
+  }
+
+  async updateProfile(input: UpdateProfileInput): Promise<UpdateProfileResult> {
+    this.requireOAuth1Credentials();
+    const params = this.buildProfileParams(input);
+    const url = `${this.baseUrl}/1.1/account/update_profile.json`;
+    const body = new URLSearchParams(params).toString();
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          // OAuth 1.0a: form-encoded body params MUST be included in the signature base.
+          Authorization: this.buildOAuthHeader("POST", url, params),
+        },
+        body,
+        signal: controller.signal,
+      });
+
+      if (!res.ok) {
+        const errorBody = await res.text();
+        const retryAfterHeader = res.headers.get("retry-after");
+        const retryHint = retryAfterHeader ? ` (retry-after: ${retryAfterHeader}s)` : "";
+        let msg = `X API error ${res.status}${retryHint}: ${errorBody}`;
+        if (res.status === 401 || res.status === 403) {
+          msg += " Requires Elevated/paid tier access (v1.1 account/update_profile).";
+        }
+        throw new Error(msg);
+      }
+
+      const data = (await res.json()) as {
+        screen_name?: string;
+        name?: string;
+        description?: string;
+        location?: string;
+        url?: string;
+        entities?: { url?: { urls?: Array<{ expanded_url?: string }> } };
+      };
+      const expanded = data.entities?.url?.urls?.[0]?.expanded_url;
+      return {
+        screenName: data.screen_name,
+        name: data.name,
+        description: data.description,
+        location: data.location,
+        url: expanded ?? data.url,
       };
     } finally {
       clearTimeout(timer);

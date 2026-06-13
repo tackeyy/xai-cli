@@ -1514,3 +1514,146 @@ describe("TwitterClient.getDmEvents - dm_event.fields and params", () => {
     await expect(tc.getDmEvents()).rejects.toThrow(/Requires Elevated\/paid tier access/);
   });
 });
+
+
+describe("TwitterClient.updateProfile", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    fetchSpy = vi.spyOn(global, "fetch");
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function mockUserResponse(overrides: Record<string, unknown> = {}) {
+    return new Response(
+      JSON.stringify({
+        screen_name: "3chhe",
+        name: "Yusuke",
+        description: "new bio",
+        location: "Tokyo",
+        url: "https://t.co/abc",
+        entities: { url: { urls: [{ expanded_url: "https://example.com" }] } },
+        ...overrides,
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  }
+
+  it("POSTs to /1.1/account/update_profile.json with form-encoded bio", async () => {
+    fetchSpy.mockResolvedValue(mockUserResponse());
+    const tc = makeClient();
+    await tc.updateProfile({ bio: "new bio" });
+
+    const call = fetchSpy.mock.calls[0];
+    expect(String(call[0])).toBe("https://api.twitter.com/1.1/account/update_profile.json");
+    expect(call[1]?.method).toBe("POST");
+    const headers = call[1]?.headers as Record<string, string>;
+    expect(headers["Content-Type"]).toBe("application/x-www-form-urlencoded");
+    expect(headers["Authorization"] ?? headers["authorization"]).toMatch(/^OAuth /);
+    const body = new URLSearchParams(String(call[1]?.body));
+    expect(body.get("description")).toBe("new bio");
+    expect(body.has("name")).toBe(false);
+  });
+
+  it("sends only provided fields (name + location)", async () => {
+    fetchSpy.mockResolvedValue(mockUserResponse());
+    const tc = makeClient();
+    await tc.updateProfile({ name: "Taro", location: "Osaka" });
+    const body = new URLSearchParams(String(fetchSpy.mock.calls[0][1]?.body));
+    expect(body.get("name")).toBe("Taro");
+    expect(body.get("location")).toBe("Osaka");
+    expect(body.has("description")).toBe(false);
+    expect(body.has("url")).toBe(false);
+  });
+
+  it("maps url to form param 'url'", async () => {
+    fetchSpy.mockResolvedValue(mockUserResponse());
+    const tc = makeClient();
+    await tc.updateProfile({ url: "https://example.com" });
+    const body = new URLSearchParams(String(fetchSpy.mock.calls[0][1]?.body));
+    expect(body.get("url")).toBe("https://example.com");
+  });
+
+  it("returns normalized profile (prefers entities expanded_url)", async () => {
+    fetchSpy.mockResolvedValue(mockUserResponse());
+    const tc = makeClient();
+    const result = await tc.updateProfile({ bio: "new bio" });
+    expect(result.screenName).toBe("3chhe");
+    expect(result.name).toBe("Yusuke");
+    expect(result.description).toBe("new bio");
+    expect(result.location).toBe("Tokyo");
+    expect(result.url).toBe("https://example.com");
+  });
+
+  it("falls back to url field when entities absent", async () => {
+    fetchSpy.mockResolvedValue(mockUserResponse({ entities: undefined, url: "https://t.co/xyz" }));
+    const tc = makeClient();
+    const result = await tc.updateProfile({ bio: "x" });
+    expect(result.url).toBe("https://t.co/xyz");
+  });
+
+  it("throws when no fields provided", async () => {
+    const tc = makeClient();
+    await expect(tc.updateProfile({})).rejects.toThrow(/at least one/i);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("throws when bio exceeds 160 chars", async () => {
+    const tc = makeClient();
+    await expect(tc.updateProfile({ bio: "a".repeat(161) })).rejects.toThrow(/160/);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("throws when name exceeds 50 chars", async () => {
+    const tc = makeClient();
+    await expect(tc.updateProfile({ name: "a".repeat(51) })).rejects.toThrow(/50/);
+  });
+
+  it("throws when location exceeds 30 chars", async () => {
+    const tc = makeClient();
+    await expect(tc.updateProfile({ location: "a".repeat(31) })).rejects.toThrow(/30/);
+  });
+
+  it("throws when url exceeds 100 chars", async () => {
+    const tc = makeClient();
+    await expect(tc.updateProfile({ url: "h".repeat(101) })).rejects.toThrow(/100/);
+  });
+
+  it("annotates 403 with elevated/paid tier hint", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ errors: [{ message: "no" }] }), { status: 403 }),
+    );
+    const tc = makeClient();
+    await expect(tc.updateProfile({ bio: "x" })).rejects.toThrow(/Elevated|paid tier/i);
+  });
+
+  it("requires OAuth1 credentials", async () => {
+    const tc = makeBearerClient();
+    await expect(tc.updateProfile({ bio: "x" })).rejects.toThrow();
+  });
+});
+
+describe("TwitterClient.buildProfileParams (dry-run helper)", () => {
+  it("maps bio to description", () => {
+    const tc = makeClient();
+    expect(tc.buildProfileParams({ bio: "hi" })).toEqual({ description: "hi" });
+  });
+  it("includes all provided fields", () => {
+    const tc = makeClient();
+    expect(tc.buildProfileParams({ name: "N", bio: "B", url: "U", location: "L" })).toEqual({
+      name: "N",
+      description: "B",
+      url: "U",
+      location: "L",
+    });
+  });
+  it("throws when empty", () => {
+    const tc = makeClient();
+    expect(() => tc.buildProfileParams({})).toThrow(/at least one/i);
+  });
+  it("throws when bio too long", () => {
+    const tc = makeClient();
+    expect(() => tc.buildProfileParams({ bio: "a".repeat(161) })).toThrow(/160/);
+  });
+});
