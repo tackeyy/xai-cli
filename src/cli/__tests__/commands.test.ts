@@ -748,6 +748,7 @@ describe("CLI commands", () => {
     it("outputs confirmation in human mode", async () => {
       await run(["update-profile", "--bio", "new bio"]);
       expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Profile updated"));
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("@3chhe"));
     });
 
     it("outputs JSON in json mode", async () => {

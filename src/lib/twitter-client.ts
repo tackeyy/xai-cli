@@ -1219,7 +1219,12 @@ export class TwitterClient {
     this.requireOAuth1Credentials();
     const params = this.buildProfileParams(input);
     const url = `${this.baseUrl}/1.1/account/update_profile.json`;
-    const body = new URLSearchParams(params).toString();
+    // Encode the body with RFC3986 (space -> %20) so it matches the OAuth 1.0a
+    // signature base string exactly. URLSearchParams would encode space as '+',
+    // which can break signature verification for values containing spaces.
+    const body = Object.entries(params)
+      .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
+      .join("&");
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);

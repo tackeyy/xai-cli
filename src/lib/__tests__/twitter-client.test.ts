@@ -1567,6 +1567,15 @@ describe("TwitterClient.updateProfile", () => {
     expect(body.has("url")).toBe(false);
   });
 
+  it("percent-encodes spaces as %20 in body (OAuth-consistent, not +)", async () => {
+    fetchSpy.mockResolvedValue(mockUserResponse());
+    const tc = makeClient();
+    await tc.updateProfile({ bio: "hello world" });
+    const rawBody = String(fetchSpy.mock.calls[0][1]?.body);
+    expect(rawBody).toContain("description=hello%20world");
+    expect(rawBody).not.toContain("+");
+  });
+
   it("maps url to form param 'url'", async () => {
     fetchSpy.mockResolvedValue(mockUserResponse());
     const tc = makeClient();

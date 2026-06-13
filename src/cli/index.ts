@@ -816,6 +816,7 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
             jsonOutput(result);
           } else {
             console.log("Profile updated:");
+            if (result.screenName !== undefined) console.log(`  @${result.screenName}`);
             if (result.name !== undefined) console.log(`  name: ${result.name}`);
             if (result.description !== undefined) console.log(`  bio: ${result.description}`);
             if (result.url !== undefined) console.log(`  url: ${result.url}`);
