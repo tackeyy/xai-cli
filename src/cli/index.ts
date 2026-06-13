@@ -1249,6 +1249,18 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
     return username;
   }
 
+  async function downloadBanner(url: string): Promise<Buffer> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 30000);
+    try {
+      const res = await fetch(url, { signal: controller.signal });
+      if (!res.ok) throw new Error(`Failed to download banner: ${res.status}`);
+      return Buffer.from(await res.arrayBuffer());
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   bannerCmd
     .command("get")
     .description("Show profile banner URL(s) for a user")
@@ -1261,13 +1273,13 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
         try {
           const tc = getTwitterClient();
           const mode = getOutputMode();
-          const handle = await resolveBannerHandle(tc, opts.handle);
 
           if (opts.dryRun) {
+            const dh = opts.handle ?? "<authenticated user>";
             const summary = {
               dry_run: true,
-              endpoint: `GET https://api.twitter.com/1.1/users/profile_banner.json?screen_name=${handle}`,
-              handle,
+              endpoint: `GET https://api.twitter.com/1.1/users/profile_banner.json?screen_name=${dh}`,
+              handle: dh,
             };
             if (mode === "json") {
               jsonOutput(summary);
@@ -1277,6 +1289,7 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
             return;
           }
 
+          const handle = await resolveBannerHandle(tc, opts.handle);
           const result = await tc.getProfileBanner(handle);
 
           if (mode === "json") {
@@ -1293,9 +1306,7 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
               const imageUrl = result.sizes[sizeKey] ?? Object.values(result.sizes)[0];
               if (!imageUrl) throw new Error("No banner URL available");
               const { writeFileSync } = await import("node:fs");
-              const imgRes = await fetch(imageUrl);
-              if (!imgRes.ok) throw new Error(`Failed to download banner: ${imgRes.status}`);
-              const buf = Buffer.from(await imgRes.arrayBuffer());
+              const buf = await downloadBanner(imageUrl);
               writeFileSync(opts.save, buf);
               console.log(`Saved to: ${opts.save}`);
             }
@@ -1312,15 +1323,41 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
     .description("Download and save the current banner to ~/.xai-cli/banner-backups/")
     .option("--handle <name>", "Screen name (default: authenticated user)")
     .option("--dir <dir>", "Directory to save backup (default: ~/.xai-cli/banner-backups)")
+    .option("--dry-run", "Do not fetch/save; print what would be backed up")
     .action(
-      async (opts: { handle?: string; dir?: string }) => {
+      async (opts: { handle?: string; dir?: string; dryRun?: boolean }) => {
         try {
           const tc = getTwitterClient();
+          const mode = getOutputMode();
+          const { homedir } = await import("node:os");
+          const { join } = await import("node:path");
+          const dir = opts.dir ?? join(homedir(), ".xai-cli", "banner-backups");
+
+          if (opts.dryRun) {
+            const dh = opts.handle ?? "<authenticated user>";
+            const summary = {
+              dry_run: true,
+              endpoint: `GET https://api.twitter.com/1.1/users/profile_banner.json?screen_name=${dh}`,
+              handle: dh,
+              dir,
+            };
+            if (mode === "json") {
+              jsonOutput(summary);
+            } else {
+              console.log(`[dry-run] would backup @${dh}'s banner into ${dir}`);
+            }
+            return;
+          }
+
           const handle = await resolveBannerHandle(tc, opts.handle);
           const result = await tc.getProfileBanner(handle);
 
           if (!result.hasBanner) {
-            console.log(`@${handle} has no banner set — nothing to backup`);
+            if (mode === "json") {
+              jsonOutput({ saved: false, reason: "no banner set", handle });
+            } else {
+              console.log(`@${handle} has no banner set — nothing to backup`);
+            }
             return;
           }
 
@@ -1328,21 +1365,21 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
           const imageUrl = result.sizes["1500x500"] ?? Object.values(result.sizes)[0];
           if (!imageUrl) throw new Error("No banner URL available");
 
-          const { homedir } = await import("node:os");
-          const { join } = await import("node:path");
           const { mkdirSync, writeFileSync } = await import("node:fs");
-
-          const dir = opts.dir ?? join(homedir(), ".xai-cli", "banner-backups");
           mkdirSync(dir, { recursive: true });
           const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-          const filename = `${handle}-${timestamp}.jpg`;
+          const ext = (imageUrl.match(/\.(jpg|jpeg|png|webp|gif)(?:\?|$)/i)?.[1] ?? "jpg").toLowerCase();
+          const filename = `${handle}-${timestamp}.${ext}`;
           const savePath = join(dir, filename);
 
-          const imgRes = await fetch(imageUrl);
-          if (!imgRes.ok) throw new Error(`Failed to download banner: ${imgRes.status}`);
-          const buf = Buffer.from(await imgRes.arrayBuffer());
+          const buf = await downloadBanner(imageUrl);
           writeFileSync(savePath, buf);
-          console.log(`Banner backed up: ${savePath}`);
+
+          if (mode === "json") {
+            jsonOutput({ saved: true, path: savePath, handle });
+          } else {
+            console.log(`Banner backed up: ${savePath}`);
+          }
         } catch (err: any) {
           console.error(`Error: ${err.message}`);
           process.exit(1);

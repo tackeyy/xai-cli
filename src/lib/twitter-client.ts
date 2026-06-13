@@ -1219,14 +1219,13 @@ export class TwitterClient {
         );
       }
     }
-    // Guard on raw base64 string length (proxy for request body size).
-    // Twitter rejects banners over 5MB; base64 strings > 5MB characters indicate
-    // an image that will exceed the limit.
-    const MAX_BASE64_LEN = 5 * 1024 * 1024; // 5 MB
+    // X limit is 5MB on the DECODED image. base64 inflates size ~4/3, so the
+    // base64 string of a 5MB image is ~6.99M chars. Guard on that — NOT on 5M
+    // chars, which would wrongly reject valid images down to ~3.75MB decoded.
+    const MAX_BASE64_LEN = Math.ceil((5 * 1024 * 1024 * 4) / 3); // ≈6,990,508 chars (= 5MB decoded)
     if (imageBase64.length > MAX_BASE64_LEN) {
-      throw new Error(
-        `Image size exceeds 5MB limit (base64 length: ${imageBase64.length} chars).`,
-      );
+      const approxMb = ((imageBase64.length * 3) / 4 / (1024 * 1024)).toFixed(1);
+      throw new Error(`Image exceeds 5MB limit (got ~${approxMb}MB decoded).`);
     }
   }
 

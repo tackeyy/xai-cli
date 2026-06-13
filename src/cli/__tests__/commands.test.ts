@@ -1205,6 +1205,7 @@ describe("CLI commands", () => {
     it("does NOT call getProfileBanner in --dry-run mode", async () => {
       const { twitterClient } = await run(["banner", "get", "--dry-run"]);
       expect(twitterClient.getProfileBanner).not.toHaveBeenCalled();
+      expect(twitterClient.getAuthenticatedUser).not.toHaveBeenCalled();
     });
 
     it("prints error and exit 1 on failure", async () => {
@@ -1215,6 +1216,25 @@ describe("CLI commands", () => {
       await run(["banner", "get"], undefined, tc);
       expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("X API error 403"));
       expect(exitSpy).toHaveBeenCalledWith(1);
+    });
+
+    it("downloads and saves the banner with --save", async () => {
+      const { tmpdir } = await import("node:os");
+      const { join } = await import("node:path");
+      const { existsSync, rmSync } = await import("node:fs");
+      const out = join(tmpdir(), "xai-get-save-test.jpg");
+      const tc = createMockTwitterClient();
+      const fetchSpy = vi.spyOn(global, "fetch").mockResolvedValue(
+        new Response(new Uint8Array([0xff, 0xd8, 0xff]).buffer, { status: 200 }),
+      );
+      try {
+        await run(["banner", "get", "--save", out], undefined, tc);
+        expect(existsSync(out)).toBe(true);
+        expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Saved to"));
+      } finally {
+        fetchSpy.mockRestore();
+        if (existsSync(out)) rmSync(out);
+      }
     });
   });
 
@@ -1244,6 +1264,41 @@ describe("CLI commands", () => {
       });
       await run(["banner", "backup"], undefined, tc);
       expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("no banner"));
+    });
+
+    it("does NOT call getProfileBanner in dry-run", async () => {
+      const { twitterClient } = await run(["banner", "backup", "--dry-run", "--handle", "someuser"]);
+      expect(twitterClient.getProfileBanner).not.toHaveBeenCalled();
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("[dry-run]"));
+    });
+
+    it("errors and exits 1 when image download fails", async () => {
+      const tc = createMockTwitterClient();
+      const fetchSpy = vi.spyOn(global, "fetch").mockResolvedValue(new Response("", { status: 403 }));
+      try {
+        await run(["banner", "backup"], undefined, tc);
+        expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("Failed to download"));
+        expect(exitSpy).toHaveBeenCalledWith(1);
+      } finally {
+        fetchSpy.mockRestore();
+      }
+    });
+
+    it("outputs JSON with saved path in --json mode", async () => {
+      const { tmpdir } = await import("node:os");
+      const { join } = await import("node:path");
+      const tc = createMockTwitterClient();
+      const fetchSpy = vi.spyOn(global, "fetch").mockResolvedValue(
+        new Response(new Uint8Array([0xff, 0xd8, 0xff]).buffer, { status: 200 }),
+      );
+      try {
+        await run(["--json", "banner", "backup", "--dir", join(tmpdir(), "xai-banner-test")], undefined, tc);
+        const parsed = JSON.parse(logSpy.mock.calls[0][0]);
+        expect(parsed.saved).toBe(true);
+        expect(parsed.path).toContain("myself-");
+      } finally {
+        fetchSpy.mockRestore();
+      }
     });
   });
 

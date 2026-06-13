@@ -1849,7 +1849,7 @@ describe("TwitterClient.updateProfileBanner", () => {
   it("validates image size: throws when base64 > 5MB decoded", async () => {
     // 5MB = 5 * 1024 * 1024 bytes. base64 is 4/3 ratio, so >6.67MB base64 string.
     // We check the validator by passing an over-limit base64 string.
-    const oversized = "A".repeat(5 * 1024 * 1024 + 1); // decoded > 5MB
+    const oversized = "A".repeat(Math.ceil((5 * 1024 * 1024 * 4) / 3) + 1); // base64 of >5MB image
     const tc = makeClient();
     await expect(tc.updateProfileBanner(oversized)).rejects.toThrow(/5MB|size/i);
     expect(fetchSpy).not.toHaveBeenCalled();
@@ -1941,8 +1941,15 @@ describe("TwitterClient.validateBannerImage", () => {
 
   it("throws when base64 decoded size > 5MB", () => {
     const tc = makeClient();
-    const oversized = "A".repeat(5 * 1024 * 1024 + 1);
+    const oversized = "A".repeat(Math.ceil((5 * 1024 * 1024 * 4) / 3) + 1);
     expect(() => tc.validateBannerImage(oversized)).toThrow(/5MB|size/i);
+  });
+
+  it("accepts base64 between old(5M-char) and new(~7M) limit — proves the decoded-size fix", () => {
+    const tc = makeClient();
+    // 5M+1 chars = ~3.75MB decoded: valid, but the buggy 5M-char limit wrongly rejected it
+    const justOverOldLimit = "A".repeat(5 * 1024 * 1024 + 1);
+    expect(() => tc.validateBannerImage(justOverOldLimit)).not.toThrow();
   });
 
   it("does not throw for valid size under 5MB", () => {
