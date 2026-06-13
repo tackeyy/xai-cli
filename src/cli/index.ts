@@ -70,6 +70,20 @@ function formatDmCheckHuman(result: DmCheckResult): void {
   console.log(`  fetched_at: ${result.fetched_at}`);
 }
 
+function formatProfileHuman(
+  profile: Awaited<ReturnType<TwitterClient["getUserProfileByUsername"]>>,
+  bioCharCount: number,
+  bioLineCount: number,
+): void {
+  console.log(`@${profile.username ?? ""}\t${profile.name ?? ""}`);
+  console.log(
+    `followers=${profile.followers_count ?? "null"}\tfollowing=${profile.following_count ?? "null"}\tverified=${profile.verified ?? "null"}`,
+  );
+  if (profile.created_at) console.log(`created_at=${profile.created_at}`);
+  console.log(`--- bio (${bioCharCount}字 / ${bioLineCount}行) ---`);
+  console.log(profile.description ? profile.description : "(bio未設定)");
+}
+
 function buildPostInput(opts: {
   text: string;
   url?: string;
@@ -233,6 +247,34 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
         }
       } catch (err: any) {
         console.error(`Error: ${err.message}`);
+        process.exit(1);
+      }
+    });
+
+  // --- profile ---
+  const profile = program.command("profile").description("Profile lookup commands");
+
+  profile
+    .command("get <handle>")
+    .description("Get a user's profile (bio/name/metrics) via X API v2 users/by/username")
+    .action(async (handle) => {
+      try {
+        const tc = getTwitterClient();
+        const result = await tc.getUserProfileByUsername(stripAt(handle));
+        const bio = result.description ?? "";
+        const bioCharCount = [...bio].length;
+        const bioLineCount = bio.length === 0 ? 0 : bio.split("\n").length;
+
+        if (getOutputMode() === "json") {
+          jsonOutput({ ...result, bio_char_count: bioCharCount, bio_line_count: bioLineCount });
+        } else {
+          formatProfileHuman(result, bioCharCount, bioLineCount);
+        }
+      } catch (err: any) {
+        console.error(`Error: ${err.message}`);
+        if (/\b40[13]\b/.test(String(err.message ?? ""))) {
+          console.error("Hint: 401/403 はトークン不足の可能性。X_BEARER_TOKEN を確認してください。");
+        }
         process.exit(1);
       }
     });
