@@ -335,6 +335,71 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
     );
 
 
+  // --- home-timeline ---
+  program
+    .command("home-timeline [userId]")
+    .description("Get the authenticated user's home timeline (フォロー全体, reverse_chronological, OAuth1)")
+    .option("--tweet-fields <csv>", "Tweet fields (comma-separated)", parseCsv)
+    .option("--expansions <csv>", "Expansions (comma-separated)", parseCsv)
+    .option("--user-fields <csv>", "User fields for expansions (comma-separated)", parseCsv)
+    .option("--max-results <n>", "Max results per page (5-100)", parsePositiveInteger)
+    .option("--exclude <csv>", "Exclude types: retweets,replies", parseCsv)
+    .option("--pagination-token <token>", "Pagination token for single page")
+    .action(
+      async (
+        userId: string | undefined,
+        opts: {
+          tweetFields?: string[];
+          expansions?: string[];
+          userFields?: string[];
+          maxResults?: number;
+          exclude?: string[];
+          paginationToken?: string;
+        },
+      ) => {
+        try {
+          const tc = getTwitterClient();
+          const mode = getOutputMode();
+
+          // reverse_chronological の :id は認証ユーザー自身。未指定なら
+          // OAuth1 access token (<userid>-<rest> 形式) の prefix から導出する。
+          let id = userId;
+          if (!id) {
+            const accessToken = process.env.X_ACCESS_TOKEN ?? "";
+            id = accessToken.includes("-") ? accessToken.split("-")[0] : "";
+            if (!id) {
+              console.error("Error: userId を指定するか X_ACCESS_TOKEN を設定してください");
+              process.exit(1);
+              return;
+            }
+          }
+
+          const result = await tc.getHomeTimeline(id, {
+            tweetFields: opts.tweetFields,
+            expansions: opts.expansions,
+            userFields: opts.userFields,
+            maxResults: opts.maxResults,
+            exclude: opts.exclude,
+            paginationToken: opts.paginationToken,
+            auth: "oauth1",
+          });
+
+          if (mode === "json") {
+            jsonOutput(result);
+          } else {
+            console.log(`Home timeline: ${result.meta?.result_count ?? result.data.length} tweets`);
+            formatTimelineOutput(result.data);
+            if (result.meta?.next_token) {
+              console.log(`\n(next page: --pagination-token ${result.meta.next_token})`);
+            }
+          }
+        } catch (err: any) {
+          console.error(`Error: ${err.message}`);
+          process.exit(1);
+        }
+      },
+    );
+
   // --- mentions ---
   program
     .command("mentions <user>")

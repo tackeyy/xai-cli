@@ -433,6 +433,43 @@ export class TwitterClient {
     return this.normalizeTweetResponse(response);
   }
 
+  /**
+   * 認証ユーザーのホームタイムライン (フォロー中の全アカウントの投稿) を逆時系列で取得する。
+   * X API の /2/users/:id/timelines/reverse_chronological は App-only Bearer が禁止されており
+   * OAuth 1.0a / OAuth 2.0 User Context が必須なため、auth の既定値は "oauth1"。
+   * :id は認証ユーザー自身の id である必要がある。
+   */
+  async getHomeTimeline(
+    userId: string,
+    opts?: {
+      tweetFields?: string[];
+      expansions?: string[];
+      userFields?: string[];
+      mediaFields?: string[];
+      maxResults?: number;
+      paginationToken?: string;
+      exclude?: string[];
+      auth?: "bearer" | "oauth1";
+    },
+  ): Promise<TwitterUserTimelineResponse> {
+    const query: Record<string, string | number | undefined> = {};
+    const tweetFields = opts?.tweetFields ?? DEFAULT_TIMELINE_TWEET_FIELDS;
+    if (tweetFields.length) query["tweet.fields"] = tweetFields.join(",");
+    if (opts?.expansions?.length) query.expansions = opts.expansions.join(",");
+    if (opts?.userFields?.length) query["user.fields"] = opts.userFields.join(",");
+    if (opts?.mediaFields?.length) query["media.fields"] = opts.mediaFields.join(",");
+    if (opts?.exclude?.length) query.exclude = opts.exclude.join(",");
+    if (opts?.maxResults) query.max_results = opts.maxResults;
+    if (opts?.paginationToken) query.pagination_token = opts.paginationToken;
+
+    const response = await this.get<TwitterUserTimelineResponse>(
+      `/2/users/${encodeURIComponent(userId)}/timelines/reverse_chronological`,
+      { auth: opts?.auth ?? "oauth1", query },
+    );
+
+    return this.normalizeTweetResponse(response);
+  }
+
   async getUserTimelineCount(
     userId: string,
     opts: {

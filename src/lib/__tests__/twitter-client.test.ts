@@ -1666,3 +1666,41 @@ describe("TwitterClient.buildProfileParams (dry-run helper)", () => {
     expect(() => tc.buildProfileParams({ bio: "a".repeat(161) })).toThrow(/160/);
   });
 });
+
+describe("TwitterClient.getHomeTimeline", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    fetchSpy = vi.spyOn(global, "fetch");
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("calls reverse_chronological with OAuth1 by default and supports exclude/max_results", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(
+        JSON.stringify({ data: [{ id: "t1", text: "hi" }], meta: { result_count: 1 } }),
+        { status: 200 },
+      ),
+    );
+
+    const tc = makeClient(); // oauth1 creds
+    await tc.getHomeTimeline("u123", { maxResults: 10, exclude: ["retweets", "replies"] });
+
+    const call = fetchSpy.mock.calls[0];
+    const url = call[0] as string;
+    expect(url).toContain("/2/users/u123/timelines/reverse_chronological");
+    expect(url).toContain("exclude=retweets%2Creplies");
+    expect(url).toContain("max_results=10");
+    const headers = call[1]?.headers as Record<string, string>;
+    expect(headers["Authorization"]).toMatch(/^OAuth /);
+  });
+
+  it("throws on 403 (App-only Bearer is forbidden for this endpoint)", async () => {
+    fetchSpy.mockResolvedValue(new Response("Forbidden", { status: 403 }));
+    const tc = makeBearerClient();
+    await expect(tc.getHomeTimeline("u123", { auth: "bearer" })).rejects.toThrow(/403/);
+  });
+});
