@@ -759,6 +759,76 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
       },
     );
 
+  // --- update-profile ---
+  program
+    .command("update-profile")
+    .description(
+      "Update X profile fields (bio/name/url/location) via v1.1 account/update_profile (requires OAuth1.0a + Elevated/paid tier)",
+    )
+    .option("--name <string>", "Display name (max 50 chars)")
+    .option("--bio <string>", "Profile bio / description (max 160 chars)")
+    .option("--url <string>", "Profile website URL (max 100 chars)")
+    .option("--location <string>", "Location (max 30 chars)")
+    .option("--dry-run", "Do not send; print the request that would be made")
+    .action(
+      async (opts: {
+        name?: string;
+        bio?: string;
+        url?: string;
+        location?: string;
+        dryRun?: boolean;
+      }) => {
+        try {
+          const input = {
+            name: opts.name,
+            bio: opts.bio,
+            url: opts.url,
+            location: opts.location,
+          };
+          const mode = getOutputMode();
+
+          if (opts.dryRun) {
+            const dummy = new TwitterClient({
+              apiKey: "dry-run",
+              apiSecret: "dry-run",
+              accessToken: "dry-run",
+              accessTokenSecret: "dry-run",
+            });
+            const params = dummy.buildProfileParams(input);
+            const summary = {
+              dry_run: true,
+              endpoint: "POST https://api.twitter.com/1.1/account/update_profile.json",
+              params,
+            };
+            if (mode === "json") {
+              jsonOutput(summary);
+            } else {
+              console.log(`[dry-run] endpoint: ${summary.endpoint}`);
+              console.log(`[dry-run] params: ${JSON.stringify(params, null, 2)}`);
+            }
+            return;
+          }
+
+          const tc = getTwitterClient();
+          const result = await tc.updateProfile(input);
+
+          if (mode === "json") {
+            jsonOutput(result);
+          } else {
+            console.log("Profile updated:");
+            if (result.screenName !== undefined) console.log(`  @${result.screenName}`);
+            if (result.name !== undefined) console.log(`  name: ${result.name}`);
+            if (result.description !== undefined) console.log(`  bio: ${result.description}`);
+            if (result.url !== undefined) console.log(`  url: ${result.url}`);
+            if (result.location !== undefined) console.log(`  location: ${result.location}`);
+          }
+        } catch (err: any) {
+          console.error(`Error: ${err.message}`);
+          process.exit(1);
+        }
+      },
+    );
+
   // --- following ---
   program
     .command("following <user>")

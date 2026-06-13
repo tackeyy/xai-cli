@@ -20,7 +20,7 @@ npm link
 export XAI_API_KEY="your-xai-api-key"
 ```
 
-### X API OAuth 1.0a（reply / post コマンド用）
+### X API OAuth 1.0a（reply / post / update-profile コマンド用）
 
 ```bash
 export X_API_KEY="your-x-api-key"
@@ -243,6 +243,38 @@ xai --json post --text "hi"
 - ネットワーク / 5xx: `TwitterClient.postTweet` レベルでは投げる (リトライは呼び出し側で `withRetry` を利用)
 
 > **注意**: `post` コマンドには `reply` と同じ X API OAuth 1.0a 認証が必要です。
+
+### プロフィールを更新する
+
+bio（自己紹介）・表示名・URL・場所を更新する。X API v2 にプロフィール更新エンドポイントが無いため、v1.1 `account/update_profile` を使用する。
+
+```bash
+# bio（自己紹介）を更新
+xai update-profile --bio "元CTO / 経営者。AIで会社を作り直しています"
+
+# 表示名・URL・場所をまとめて更新
+xai update-profile --name "瀧田雄介" --url "https://example.com" --location "Tokyo"
+
+# dry-run（送信せず、組み立てたリクエストを表示）
+xai update-profile --dry-run --bio "test"
+
+# JSON 形式で結果を出力
+xai --json update-profile --bio "hi"
+```
+
+**フィールドと上限**:
+- `--name` 表示名（最大 50 文字）
+- `--bio` 自己紹介 / description（最大 160 文字）
+- `--url` ウェブサイト URL（最大 100 文字）
+- `--location` 場所（最大 30 文字）
+- いずれか 1 つ以上を指定する必要がある（全て未指定は exit 1）
+
+**エラーハンドリング**:
+- 文字数超過: 送信前にローカル検証で弾く (exit 1)
+- 401/403 (認証失敗 / ティア不足): メッセージに「Requires Elevated/paid tier access」を併記して exit 1
+- 429 (rate limit): `retry-after` ヘッダ値を併記して exit 1
+
+> **注意**: `update-profile` は `post` / `reply` と同じ X API OAuth 1.0a 認証が必要です。さらに v1.1 `account/update_profile` は X API の **Elevated / 有料ティア** でのみ利用できる場合があります（無料 / Basic では 401/403 になることがあります）。
 
 ### フォロー一覧を取得
 
