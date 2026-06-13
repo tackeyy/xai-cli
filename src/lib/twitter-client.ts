@@ -53,6 +53,7 @@ export interface PostTweetInput {
   noLengthCheck?: boolean;
   quoteTweetId?: string;
   mediaIds?: string[];
+  poll?: { options: string[]; durationMinutes: number };
 }
 
 export interface PostTweetPayload {
@@ -60,6 +61,16 @@ export interface PostTweetPayload {
   reply?: { in_reply_to_tweet_id: string };
   quote_tweet_id?: string;
   media?: { media_ids: string[] };
+  poll?: { options: string[]; duration_minutes: number };
+}
+
+export interface SendDirectMessageResult {
+  dm_conversation_id: string;
+  dm_event_id: string;
+}
+
+export interface BookmarkMutationResult {
+  bookmarked: boolean;
 }
 
 export interface UploadMediaResult {
@@ -1656,6 +1667,9 @@ export class TwitterClient {
     if (input.mediaIds && input.mediaIds.length > 0) {
       payload.media = { media_ids: input.mediaIds };
     }
+    if (input.poll) {
+      payload.poll = { options: input.poll.options, duration_minutes: input.poll.durationMinutes };
+    }
     return payload;
   }
 
@@ -1698,6 +1712,170 @@ export class TwitterClient {
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  // --- M3: Send Direct Message ---
+
+  /**
+   * POST /2/dm_conversations/with/:participantId/messages
+   * Sends a DM to a user. Requires oauth2-user (default) or oauth1.
+   */
+  async sendDirectMessage(
+    participantId: string,
+    text: string,
+    opts?: {
+      auth?: Extract<TwitterAuthMode, "oauth1" | "oauth2-user">;
+    },
+  ): Promise<SendDirectMessageResult> {
+    const auth = opts?.auth ?? "oauth2-user";
+    const url = `${this.baseUrl}/2/dm_conversations/with/${encodeURIComponent(participantId)}/messages`;
+
+    let authHeader: string;
+    if (auth === "oauth1") {
+      this.requireOAuth1Credentials();
+      authHeader = this.buildOAuthHeader("POST", url);
+    } else {
+      authHeader = `Bearer ${this.requireOAuth2UserToken()}`;
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: authHeader,
+        },
+        body: JSON.stringify({ text }),
+        signal: controller.signal,
+      });
+
+      if (!res.ok) {
+        const errorBody = await res.text();
+        const retryAfterHeader = res.headers.get("retry-after");
+        const retryHint = retryAfterHeader ? ` (retry-after: ${retryAfterHeader}s)` : "";
+        throw new Error(`X API error ${res.status}${retryHint}: ${errorBody}`);
+      }
+
+      const data = (await res.json()) as {
+        data: { dm_conversation_id: string; dm_event_id: string };
+      };
+      return {
+        dm_conversation_id: data.data.dm_conversation_id,
+        dm_event_id: data.data.dm_event_id,
+      };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  // --- M4: Bookmark mutations ---
+
+  /**
+   * POST /2/users/:userId/bookmarks
+   * Creates a bookmark. Requires oauth2-user.
+   */
+  async createBookmark(
+    tweetId: string,
+    opts: { userId: string },
+  ): Promise<BookmarkMutationResult> {
+    const token = this.requireOAuth2UserToken();
+    const url = `${this.baseUrl}/2/users/${encodeURIComponent(opts.userId)}/bookmarks`;
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ tweet_id: tweetId }),
+        signal: controller.signal,
+      });
+
+      if (!res.ok) {
+        const errorBody = await res.text();
+        const retryAfterHeader = res.headers.get("retry-after");
+        const retryHint = retryAfterHeader ? ` (retry-after: ${retryAfterHeader}s)` : "";
+        throw new Error(`X API error ${res.status}${retryHint}: ${errorBody}`);
+      }
+
+      const data = (await res.json()) as { data: { bookmarked: boolean } };
+      return { bookmarked: data.data.bookmarked };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /**
+   * DELETE /2/users/:userId/bookmarks/:tweetId
+   * Removes a bookmark. Requires oauth2-user.
+   */
+  async deleteBookmark(
+    tweetId: string,
+    opts: { userId: string },
+  ): Promise<BookmarkMutationResult> {
+    const token = this.requireOAuth2UserToken();
+    const url = `${this.baseUrl}/2/users/${encodeURIComponent(opts.userId)}/bookmarks/${encodeURIComponent(tweetId)}`;
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+
+    try {
+      const res = await fetch(url, {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        signal: controller.signal,
+      });
+
+      if (!res.ok) {
+        const errorBody = await res.text();
+        const retryAfterHeader = res.headers.get("retry-after");
+        const retryHint = retryAfterHeader ? ` (retry-after: ${retryAfterHeader}s)` : "";
+        throw new Error(`X API error ${res.status}${retryHint}: ${errorBody}`);
+      }
+
+      const data = (await res.json()) as { data: { bookmarked: boolean } };
+      return { bookmarked: data.data.bookmarked };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  // --- M6: Thread posting ---
+
+  /**
+   * Post a thread of tweets. Each tweet after the first replies to the previous one.
+   * @param texts - Array of tweet text strings (one per tweet in the thread)
+   * @returns Array of PostTweetResult in order
+   */
+  async postThread(texts: string[]): Promise<PostTweetResult[]> {
+    if (!texts || texts.length === 0) {
+      throw new Error("postThread: texts array must not be empty");
+    }
+
+    this.requireOAuth1Credentials();
+
+    const results: PostTweetResult[] = [];
+    let previousTweetId: string | undefined;
+
+    for (const text of texts) {
+      const result = await this.postTweet({
+        text,
+        replyTo: previousTweetId,
+      });
+      results.push(result);
+      previousTweetId = result.id;
+    }
+
+    return results;
   }
 
   // --- Profile update (v1.1 account/update_profile) ---

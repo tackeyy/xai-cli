@@ -220,6 +220,17 @@ function createMockTwitterClient(): TwitterClient {
       ],
       meta: { result_count: 2 },
     }),
+    sendDirectMessage: vi.fn().mockResolvedValue({
+      dm_conversation_id: "conv-test-1",
+      dm_event_id: "ev-test-1",
+    }),
+    createBookmark: vi.fn().mockResolvedValue({ bookmarked: true }),
+    deleteBookmark: vi.fn().mockResolvedValue({ bookmarked: false }),
+    postThread: vi.fn().mockResolvedValue([
+      { id: "th1", text: "first", url: "https://x.com/i/status/th1", posted_at: "2026-01-01T00:00:00Z" },
+      { id: "th2", text: "second", url: "https://x.com/i/status/th2", posted_at: "2026-01-01T00:00:01Z" },
+    ]),
+    buildPostPayload: vi.fn().mockReturnValue({ text: "hello" }),
   };
   return mock as TwitterClient;
 }
@@ -1972,6 +1983,222 @@ describe("CLI commands", () => {
         new Error("X API error 403: Forbidden"),
       );
       await run(["user-search", "test"], undefined, tc);
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("403"));
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    });
+  });
+
+  // ===================================================================
+  // dm-send コマンド (M3)
+  // ===================================================================
+  describe("dm-send command", () => {
+    it("resolves username to userId and calls sendDirectMessage", async () => {
+      const tc = createMockTwitterClient();
+      await run(["dm-send", "zeimu_ai", "Hello!"], undefined, tc);
+      expect(tc.getUserByUsername).toHaveBeenCalledWith("zeimu_ai", expect.anything());
+      expect(tc.sendDirectMessage).toHaveBeenCalledWith("12345", "Hello!", expect.anything());
+    });
+
+    it("strips @ prefix from username", async () => {
+      const tc = createMockTwitterClient();
+      await run(["dm-send", "@zeimu_ai", "hi"], undefined, tc);
+      expect(tc.getUserByUsername).toHaveBeenCalledWith("zeimu_ai", expect.anything());
+    });
+
+    it("outputs human format on success", async () => {
+      const tc = createMockTwitterClient();
+      await run(["dm-send", "zeimu_ai", "Hello!"], undefined, tc);
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("conv-test-1"));
+    });
+
+    it("outputs JSON format when --json is set", async () => {
+      const tc = createMockTwitterClient();
+      await run(["--json", "dm-send", "zeimu_ai", "Hello!"], undefined, tc);
+      const parsed = JSON.parse(logSpy.mock.calls[0][0]);
+      expect(parsed.dm_conversation_id).toBe("conv-test-1");
+      expect(parsed.dm_event_id).toBe("ev-test-1");
+    });
+
+    it("prints dry-run info without calling sendDirectMessage", async () => {
+      const tc = createMockTwitterClient();
+      await run(["dm-send", "--dry-run", "zeimu_ai", "Hello!"], undefined, tc);
+      expect(tc.sendDirectMessage).not.toHaveBeenCalled();
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("[dry-run]"));
+    });
+
+    it("prints error and exits 1 on API failure", async () => {
+      const tc = createMockTwitterClient();
+      (tc.sendDirectMessage as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new Error("X API error 403: Forbidden"),
+      );
+      await run(["dm-send", "zeimu_ai", "hello"], undefined, tc);
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("403"));
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    });
+  });
+
+  // ===================================================================
+  // bookmarks add / remove コマンド (M4)
+  // ===================================================================
+  describe("bookmarks add command", () => {
+    it("resolves userId and calls createBookmark", async () => {
+      const tc = createMockTwitterClient();
+      await run(["bookmarks", "add", "tweet-123"], undefined, tc);
+      expect(tc.createBookmark).toHaveBeenCalledWith("tweet-123", { userId: "me123" });
+    });
+
+    it("outputs human format on success", async () => {
+      const tc = createMockTwitterClient();
+      await run(["bookmarks", "add", "tweet-123"], undefined, tc);
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("tweet-123"));
+    });
+
+    it("outputs JSON format when --json is set", async () => {
+      const tc = createMockTwitterClient();
+      await run(["--json", "bookmarks", "add", "tweet-123"], undefined, tc);
+      const parsed = JSON.parse(logSpy.mock.calls[0][0]);
+      expect(parsed.bookmarked).toBe(true);
+    });
+
+    it("prints dry-run info without calling createBookmark", async () => {
+      const tc = createMockTwitterClient();
+      await run(["bookmarks", "add", "--dry-run", "tweet-123"], undefined, tc);
+      expect(tc.createBookmark).not.toHaveBeenCalled();
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("[dry-run]"));
+    });
+
+    it("prints error and exits 1 on API failure", async () => {
+      const tc = createMockTwitterClient();
+      (tc.createBookmark as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new Error("X API error 401: Unauthorized"),
+      );
+      await run(["bookmarks", "add", "t1"], undefined, tc);
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("401"));
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    });
+  });
+
+  describe("bookmarks remove command", () => {
+    it("resolves userId and calls deleteBookmark", async () => {
+      const tc = createMockTwitterClient();
+      await run(["bookmarks", "remove", "tweet-456"], undefined, tc);
+      expect(tc.deleteBookmark).toHaveBeenCalledWith("tweet-456", { userId: "me123" });
+    });
+
+    it("outputs human format on success", async () => {
+      const tc = createMockTwitterClient();
+      await run(["bookmarks", "remove", "tweet-456"], undefined, tc);
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("tweet-456"));
+    });
+
+    it("outputs JSON format when --json is set", async () => {
+      const tc = createMockTwitterClient();
+      await run(["--json", "bookmarks", "remove", "tweet-456"], undefined, tc);
+      const parsed = JSON.parse(logSpy.mock.calls[0][0]);
+      expect(parsed.bookmarked).toBe(false);
+    });
+
+    it("prints dry-run info without calling deleteBookmark", async () => {
+      const tc = createMockTwitterClient();
+      await run(["bookmarks", "remove", "--dry-run", "tweet-456"], undefined, tc);
+      expect(tc.deleteBookmark).not.toHaveBeenCalled();
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("[dry-run]"));
+    });
+
+    it("prints error and exits 1 on API failure", async () => {
+      const tc = createMockTwitterClient();
+      (tc.deleteBookmark as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new Error("X API error 404: Not Found"),
+      );
+      await run(["bookmarks", "remove", "t1"], undefined, tc);
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("404"));
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    });
+  });
+
+  // ===================================================================
+  // post --poll (M5)
+  // ===================================================================
+  describe("post --poll command", () => {
+    it("passes poll options to buildPostPayload in dry-run", async () => {
+      const tc = createMockTwitterClient();
+      await run(
+        ["post", "--dry-run", "--text", "Vote!", "--poll", "Yes", "No", "--poll-duration", "60"],
+        undefined,
+        tc,
+      );
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("[dry-run]"));
+    });
+
+    it("dry-run --json includes poll in output", async () => {
+      const tc = createMockTwitterClient();
+      (tc.buildPostPayload as ReturnType<typeof vi.fn>).mockReturnValue({
+        text: "Vote!",
+        poll: { options: ["Yes", "No"], duration_minutes: 60 },
+      });
+      await run(
+        ["--json", "post", "--dry-run", "--text", "Vote!", "--poll", "Yes", "No", "--poll-duration", "60"],
+        undefined,
+        tc,
+      );
+      const parsed = JSON.parse(logSpy.mock.calls[0][0]);
+      expect(parsed.dry_run).toBe(true);
+      expect(parsed.payload.poll).toBeDefined();
+    });
+
+    it("calls postTweet with poll options", async () => {
+      const tc = createMockTwitterClient();
+      await run(
+        ["post", "--text", "Vote!", "--poll", "Yes", "No", "--poll-duration", "60"],
+        undefined,
+        tc,
+      );
+      expect(tc.postTweet).toHaveBeenCalledWith(
+        expect.objectContaining({
+          poll: { options: ["Yes", "No"], durationMinutes: 60 },
+        }),
+      );
+    });
+  });
+
+  // ===================================================================
+  // post-thread コマンド (M6)
+  // ===================================================================
+  describe("post-thread command", () => {
+    it("calls postThread with provided texts", async () => {
+      const tc = createMockTwitterClient();
+      await run(["post-thread", "first tweet", "second tweet"], undefined, tc);
+      expect(tc.postThread).toHaveBeenCalledWith(["first tweet", "second tweet"]);
+    });
+
+    it("outputs human format showing all tweet URLs", async () => {
+      const tc = createMockTwitterClient();
+      await run(["post-thread", "first", "second"], undefined, tc);
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("th1"));
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("th2"));
+    });
+
+    it("outputs JSON format when --json is set", async () => {
+      const tc = createMockTwitterClient();
+      await run(["--json", "post-thread", "first", "second"], undefined, tc);
+      const parsed = JSON.parse(logSpy.mock.calls[0][0]);
+      expect(Array.isArray(parsed)).toBe(true);
+      expect(parsed[0].id).toBe("th1");
+    });
+
+    it("dry-run shows thread structure without calling postThread", async () => {
+      const tc = createMockTwitterClient();
+      await run(["post-thread", "--dry-run", "first", "second", "third"], undefined, tc);
+      expect(tc.postThread).not.toHaveBeenCalled();
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("[dry-run]"));
+    });
+
+    it("prints error and exits 1 on API failure", async () => {
+      const tc = createMockTwitterClient();
+      (tc.postThread as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new Error("X API error 403: Forbidden"),
+      );
+      await run(["post-thread", "tweet1", "tweet2"], undefined, tc);
       expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("403"));
       expect(exitSpy).toHaveBeenCalledWith(1);
     });

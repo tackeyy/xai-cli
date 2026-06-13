@@ -2905,3 +2905,265 @@ describe("TwitterClient.searchUsers", () => {
     await expect(tc.searchUsers("test")).rejects.toThrow(/403/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// M3 sendDirectMessage
+// ---------------------------------------------------------------------------
+describe("TwitterClient.sendDirectMessage", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    fetchSpy = vi.spyOn(global, "fetch");
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("POSTs to /2/dm_conversations/with/:participantId/messages", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(
+        JSON.stringify({ data: { dm_conversation_id: "conv-1", dm_event_id: "ev-1" } }),
+        { status: 201 },
+      ),
+    );
+    const tc = makeOAuth2UserClient();
+    const result = await tc.sendDirectMessage("12345", "Hello!");
+    expect(result.dm_conversation_id).toBe("conv-1");
+    expect(result.dm_event_id).toBe("ev-1");
+    const call = fetchSpy.mock.calls[0];
+    expect(String(call[0])).toContain("/2/dm_conversations/with/12345/messages");
+    expect(call[1]?.method).toBe("POST");
+    const body = JSON.parse(String(call[1]?.body));
+    expect(body).toEqual({ text: "Hello!" });
+  });
+
+  it("uses oauth2-user Bearer auth by default", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(
+        JSON.stringify({ data: { dm_conversation_id: "c", dm_event_id: "e" } }),
+        { status: 201 },
+      ),
+    );
+    const tc = makeOAuth2UserClient();
+    await tc.sendDirectMessage("99", "hi");
+    const headers = fetchSpy.mock.calls[0][1]?.headers as Record<string, string>;
+    expect(headers["Authorization"]).toBe("Bearer test-oauth2-user-token");
+  });
+
+  it("falls back to oauth1 when opts.auth='oauth1'", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(
+        JSON.stringify({ data: { dm_conversation_id: "c", dm_event_id: "e" } }),
+        { status: 201 },
+      ),
+    );
+    const tc = makeClient();
+    await tc.sendDirectMessage("99", "hi", { auth: "oauth1" });
+    const headers = fetchSpy.mock.calls[0][1]?.headers as Record<string, string>;
+    expect(headers["Authorization"]).toMatch(/^OAuth /);
+  });
+
+  it("throws on non-2xx response", async () => {
+    fetchSpy.mockResolvedValue(new Response("Forbidden", { status: 403 }));
+    const tc = makeOAuth2UserClient();
+    await expect(tc.sendDirectMessage("1", "x")).rejects.toThrow(/403/);
+  });
+
+  it("throws when oauth2UserToken is missing and auth=oauth2-user", async () => {
+    const tc = makeClient(); // no oauth2UserToken
+    await expect(tc.sendDirectMessage("1", "x")).rejects.toThrow(/X_OAUTH2_USER_TOKEN/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M4 createBookmark / deleteBookmark
+// ---------------------------------------------------------------------------
+describe("TwitterClient.createBookmark", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    fetchSpy = vi.spyOn(global, "fetch");
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("POSTs to /2/users/:id/bookmarks with tweet_id in body", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ data: { bookmarked: true } }), { status: 200 }),
+    );
+    const tc = makeOAuth2UserClient();
+    const result = await tc.createBookmark("tweet-1", { userId: "user-1" });
+    expect(result.bookmarked).toBe(true);
+    const call = fetchSpy.mock.calls[0];
+    expect(String(call[0])).toContain("/2/users/user-1/bookmarks");
+    const body = JSON.parse(String(call[1]?.body));
+    expect(body).toEqual({ tweet_id: "tweet-1" });
+    const headers = call[1]?.headers as Record<string, string>;
+    expect(headers["Authorization"]).toMatch(/^Bearer test-oauth2-user-token/);
+  });
+
+  it("throws on non-2xx response", async () => {
+    fetchSpy.mockResolvedValue(new Response("Unauthorized", { status: 401 }));
+    const tc = makeOAuth2UserClient();
+    await expect(tc.createBookmark("t1", { userId: "u1" })).rejects.toThrow(/401/);
+  });
+
+  it("throws when oauth2UserToken is missing", async () => {
+    const tc = makeClient();
+    await expect(tc.createBookmark("t1", { userId: "u1" })).rejects.toThrow(/X_OAUTH2_USER_TOKEN/);
+  });
+});
+
+describe("TwitterClient.deleteBookmark", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    fetchSpy = vi.spyOn(global, "fetch");
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("DELETEs /2/users/:id/bookmarks/:tweetId", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ data: { bookmarked: false } }), { status: 200 }),
+    );
+    const tc = makeOAuth2UserClient();
+    const result = await tc.deleteBookmark("tweet-2", { userId: "user-1" });
+    expect(result.bookmarked).toBe(false);
+    const call = fetchSpy.mock.calls[0];
+    expect(String(call[0])).toContain("/2/users/user-1/bookmarks/tweet-2");
+    expect(call[1]?.method).toBe("DELETE");
+    const headers = call[1]?.headers as Record<string, string>;
+    expect(headers["Authorization"]).toMatch(/^Bearer test-oauth2-user-token/);
+  });
+
+  it("throws on non-2xx response", async () => {
+    fetchSpy.mockResolvedValue(new Response("Not Found", { status: 404 }));
+    const tc = makeOAuth2UserClient();
+    await expect(tc.deleteBookmark("t", { userId: "u" })).rejects.toThrow(/404/);
+  });
+
+  it("throws when oauth2UserToken is missing", async () => {
+    const tc = makeClient();
+    await expect(tc.deleteBookmark("t1", { userId: "u1" })).rejects.toThrow(/X_OAUTH2_USER_TOKEN/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M5 Poll support in buildPostPayload / postTweet
+// ---------------------------------------------------------------------------
+describe("TwitterClient.buildPostPayload with poll", () => {
+  it("adds poll to payload when poll options provided", () => {
+    const tc = makeClient();
+    const payload = tc.buildPostPayload({
+      text: "Vote!",
+      poll: { options: ["Yes", "No"], durationMinutes: 60 },
+    });
+    expect(payload.text).toBe("Vote!");
+    expect(payload.poll).toEqual({ options: ["Yes", "No"], duration_minutes: 60 });
+  });
+
+  it("does NOT add poll when poll is omitted (backward compat)", () => {
+    const tc = makeClient();
+    const payload = tc.buildPostPayload({ text: "No poll here" });
+    expect(payload.poll).toBeUndefined();
+  });
+
+  it("posts tweet with poll via postTweet", async () => {
+    const fetchSpy = vi.spyOn(global, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ data: { id: "p1", text: "Vote!" } }), { status: 200 }),
+    );
+    const tc = makeClient();
+    await tc.postTweet({ text: "Vote!", poll: { options: ["Yes", "No"], durationMinutes: 120 } });
+    const body = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
+    expect(body.poll).toEqual({ options: ["Yes", "No"], duration_minutes: 120 });
+    vi.restoreAllMocks();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M6 postThread
+// ---------------------------------------------------------------------------
+describe("TwitterClient.postThread", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    fetchSpy = vi.spyOn(global, "fetch");
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("posts multiple tweets with reply chaining", async () => {
+    // Each call returns successive tweet IDs
+    fetchSpy
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ data: { id: "t1", text: "first", created_at: "2025-01-01T00:00:00Z" } }), { status: 200 }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ data: { id: "t2", text: "second", created_at: "2025-01-01T00:00:01Z" } }), { status: 200 }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ data: { id: "t3", text: "third", created_at: "2025-01-01T00:00:02Z" } }), { status: 200 }),
+      );
+
+    const tc = makeClient();
+    const results = await tc.postThread(["first", "second", "third"]);
+
+    expect(results).toHaveLength(3);
+    expect(results[0].id).toBe("t1");
+    expect(results[1].id).toBe("t2");
+    expect(results[2].id).toBe("t3");
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
+
+    // 2nd tweet should have reply.in_reply_to_tweet_id = "t1"
+    const body2 = JSON.parse(String(fetchSpy.mock.calls[1][1]?.body));
+    expect(body2.reply?.in_reply_to_tweet_id).toBe("t1");
+
+    // 3rd tweet should reply to "t2"
+    const body3 = JSON.parse(String(fetchSpy.mock.calls[2][1]?.body));
+    expect(body3.reply?.in_reply_to_tweet_id).toBe("t2");
+  });
+
+  it("posts a single tweet without any reply chain", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ data: { id: "s1", text: "solo" } }), { status: 200 }),
+    );
+    const tc = makeClient();
+    const results = await tc.postThread(["solo"]);
+    expect(results).toHaveLength(1);
+    const body = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
+    expect(body.reply).toBeUndefined();
+  });
+
+  it("throws when texts array is empty", async () => {
+    const tc = makeClient();
+    await expect(tc.postThread([])).rejects.toThrow(/empty/i);
+  });
+
+  it("throws when OAuth1 credentials are missing", async () => {
+    const tc = makeBearerClient(); // no oauth1 creds
+    await expect(tc.postThread(["hello"])).rejects.toThrow(/OAuth 1.0a/);
+  });
+
+  it("aborts remaining tweets on API error and propagates error", async () => {
+    fetchSpy
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ data: { id: "ok1", text: "first" } }), { status: 200 }),
+      )
+      .mockResolvedValueOnce(
+        new Response("Forbidden", { status: 403 }),
+      );
+
+    const tc = makeClient();
+    await expect(tc.postThread(["first", "second"])).rejects.toThrow(/403/);
+    // Only 2 calls should have been made
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+});

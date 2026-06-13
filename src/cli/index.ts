@@ -109,6 +109,8 @@ function buildPostInput(opts: {
   quoteTweetId?: string;
   maxLength?: number;
   lengthCheck?: boolean;
+  poll?: string[];
+  pollDuration?: number;
 }): Parameters<TwitterClient["postTweet"]>[0] {
   const input: Parameters<TwitterClient["postTweet"]>[0] = {
     text: opts.text,
@@ -123,6 +125,13 @@ function buildPostInput(opts: {
 
   if (opts.lengthCheck === false) {
     input.noLengthCheck = true;
+  }
+
+  if (opts.poll && opts.poll.length > 0) {
+    input.poll = {
+      options: opts.poll,
+      durationMinutes: opts.pollDuration ?? 1440,
+    };
   }
 
   return input;
@@ -317,6 +326,60 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
         process.exit(1);
       }
     });
+
+  // --- dm-send (M3) ---
+  program
+    .command("dm-send <username> <text>")
+    .description("Send a DM to a user (requires X_OAUTH2_USER_TOKEN or OAuth1)")
+    .option("--auth <mode>", "Auth mode: oauth2-user | oauth1 (default: oauth2-user)")
+    .option("--dry-run", "Do not actually send; print the request details")
+    .action(
+      async (
+        username: string,
+        text: string,
+        opts: { auth?: string; dryRun?: boolean },
+      ) => {
+        try {
+          const tc = getTwitterClient();
+          const mode = getOutputMode();
+          const cleanUsername = stripAt(username);
+          const authMode = (opts.auth === "oauth1" ? "oauth1" : "oauth2-user") as "oauth1" | "oauth2-user";
+
+          // Resolve username -> userId
+          const lookup = await tc.getUserByUsername(cleanUsername, { auth: "bearer" });
+          const userId = lookup.data.id;
+
+          if (opts.dryRun) {
+            const summary = {
+              dry_run: true,
+              endpoint: `POST https://api.twitter.com/2/dm_conversations/with/${userId}/messages`,
+              recipient: `@${cleanUsername}`,
+              recipient_id: userId,
+              text,
+            };
+            if (mode === "json") {
+              jsonOutput(summary);
+            } else {
+              console.log(`[dry-run] endpoint: ${summary.endpoint}`);
+              console.log(`[dry-run] recipient: ${summary.recipient} (id: ${userId})`);
+              console.log(`[dry-run] text: ${text}`);
+            }
+            return;
+          }
+
+          const result = await tc.sendDirectMessage(userId, text, { auth: authMode });
+
+          if (mode === "json") {
+            jsonOutput(result);
+          } else {
+            console.log(`DM sent (conversation: ${result.dm_conversation_id}, event: ${result.dm_event_id})`);
+          }
+        } catch (err: any) {
+          console.error(`Error: ${err.message}`);
+          process.exit(1);
+        }
+      },
+    );
 
   // --- timeline ---
   program
@@ -830,6 +893,8 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
     .option("--no-length-check", "Skip local tweet-length validation")
     .option("--media <path...>", "Media file path(s) to attach (1-4 files)")
     .option("--alt-text <text...>", "Alt text for each media file (same order as --media)")
+    .option("--poll <options...>", "Poll options (2-4 choices, e.g. --poll Yes No Maybe)")
+    .option("--poll-duration <minutes>", "Poll duration in minutes (default: 1440)", parsePositiveInteger)
     .option("--dry-run", "Do not actually post; print the request payload")
     .action(
       async (opts: {
@@ -841,6 +906,8 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
         lengthCheck?: boolean;
         media?: string[];
         altText?: string[];
+        poll?: string[];
+        pollDuration?: number;
         dryRun?: boolean;
       }) => {
         try {
@@ -922,6 +989,55 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
             process.exit(1);
             return;
           }
+          console.error(`Error: ${err.message}`);
+          process.exit(1);
+        }
+      },
+    );
+
+  // --- post-thread (M6) ---
+  program
+    .command("post-thread <texts...>")
+    .description("Post a thread of tweets (each argument is one tweet, chained as replies)")
+    .option("--dry-run", "Do not actually post; print the thread structure")
+    .action(
+      async (texts: string[], opts: { dryRun?: boolean }) => {
+        try {
+          const tc = getTwitterClient();
+          const mode = getOutputMode();
+
+          if (opts.dryRun) {
+            if (mode === "json") {
+              jsonOutput({
+                dry_run: true,
+                tweet_count: texts.length,
+                tweets: texts.map((t, i) => ({
+                  index: i,
+                  text: t,
+                  reply_to: i > 0 ? `<tweet[${i - 1}].id>` : null,
+                })),
+              });
+            } else {
+              console.log(`[dry-run] Thread with ${texts.length} tweet(s):`);
+              for (let i = 0; i < texts.length; i++) {
+                const replyInfo = i > 0 ? ` (reply to tweet[${i - 1}])` : "";
+                console.log(`  [${i}]${replyInfo}: ${texts[i]}`);
+              }
+            }
+            return;
+          }
+
+          const results = await tc.postThread(texts);
+
+          if (mode === "json") {
+            jsonOutput(results);
+          } else {
+            console.log(`Thread posted (${results.length} tweets):`);
+            for (const result of results) {
+              console.log(`  ${result.id}: ${result.url}`);
+            }
+          }
+        } catch (err: any) {
           console.error(`Error: ${err.message}`);
           process.exit(1);
         }
@@ -1692,6 +1808,88 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
               console.log(`${filtered.data.length} bookmarks matching "${pattern}":`);
               formatBookmarkOutput(filtered);
             }
+          }
+        } catch (err: any) {
+          console.error(`Error: ${err.message}`);
+          process.exit(1);
+        }
+      },
+    );
+
+  // --- bookmarks add (M4) ---
+  bookmarksCmd
+    .command("add <tweetId>")
+    .description("Add a tweet to bookmarks (requires X_OAUTH2_USER_TOKEN)")
+    .option("--dry-run", "Do not actually bookmark; print the request details")
+    .action(
+      async (tweetId: string, opts: { dryRun?: boolean }) => {
+        try {
+          const tc = getTwitterClient();
+          const mode = getOutputMode();
+
+          if (opts.dryRun) {
+            const userId = await resolveUserId(tc);
+            const summary = {
+              dry_run: true,
+              endpoint: `POST https://api.twitter.com/2/users/${userId}/bookmarks`,
+              payload: { tweet_id: tweetId },
+            };
+            if (mode === "json") {
+              jsonOutput(summary);
+            } else {
+              console.log(`[dry-run] endpoint: ${summary.endpoint}`);
+              console.log(`[dry-run] payload: ${JSON.stringify(summary.payload)}`);
+            }
+            return;
+          }
+
+          const userId = await resolveUserId(tc);
+          const result = await tc.createBookmark(tweetId, { userId });
+
+          if (mode === "json") {
+            jsonOutput(result);
+          } else {
+            console.log(`Bookmarked tweet ${tweetId} (bookmarked: ${result.bookmarked})`);
+          }
+        } catch (err: any) {
+          console.error(`Error: ${err.message}`);
+          process.exit(1);
+        }
+      },
+    );
+
+  // --- bookmarks remove (M4) ---
+  bookmarksCmd
+    .command("remove <tweetId>")
+    .description("Remove a tweet from bookmarks (requires X_OAUTH2_USER_TOKEN)")
+    .option("--dry-run", "Do not actually remove; print the request details")
+    .action(
+      async (tweetId: string, opts: { dryRun?: boolean }) => {
+        try {
+          const tc = getTwitterClient();
+          const mode = getOutputMode();
+
+          if (opts.dryRun) {
+            const userId = await resolveUserId(tc);
+            const summary = {
+              dry_run: true,
+              endpoint: `DELETE https://api.twitter.com/2/users/${userId}/bookmarks/${tweetId}`,
+            };
+            if (mode === "json") {
+              jsonOutput(summary);
+            } else {
+              console.log(`[dry-run] endpoint: ${summary.endpoint}`);
+            }
+            return;
+          }
+
+          const userId = await resolveUserId(tc);
+          const result = await tc.deleteBookmark(tweetId, { userId });
+
+          if (mode === "json") {
+            jsonOutput(result);
+          } else {
+            console.log(`Removed bookmark for tweet ${tweetId} (bookmarked: ${result.bookmarked})`);
           }
         } catch (err: any) {
           console.error(`Error: ${err.message}`);
