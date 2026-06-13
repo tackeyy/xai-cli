@@ -1235,6 +1235,234 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
       }
     });
 
+  // --- banner ---
+  const bannerCmd = program
+    .command("banner")
+    .description("X profile banner image commands (requires OAuth1.0a + Elevated/paid tier)");
+
+  /** Resolve screen name: --handle takes precedence, else getAuthenticatedUser */
+  async function resolveBannerHandle(tc: TwitterClient, handle?: string): Promise<string> {
+    if (handle) return handle.startsWith("@") ? handle.slice(1) : handle;
+    const me = await tc.getAuthenticatedUser();
+    const username = me.data?.username;
+    if (!username) throw new Error("Could not determine authenticated user screen_name");
+    return username;
+  }
+
+  bannerCmd
+    .command("get")
+    .description("Show profile banner URL(s) for a user")
+    .option("--handle <name>", "Screen name (default: authenticated user)")
+    .option("--save <path>", "Download and save the banner image to a file")
+    .option("--size <size>", "Which size to use for --save (default: 1500x500)", "1500x500")
+    .option("--dry-run", "Do not fetch; print what would be requested")
+    .action(
+      async (opts: { handle?: string; save?: string; size?: string; dryRun?: boolean }) => {
+        try {
+          const tc = getTwitterClient();
+          const mode = getOutputMode();
+          const handle = await resolveBannerHandle(tc, opts.handle);
+
+          if (opts.dryRun) {
+            const summary = {
+              dry_run: true,
+              endpoint: `GET https://api.twitter.com/1.1/users/profile_banner.json?screen_name=${handle}`,
+              handle,
+            };
+            if (mode === "json") {
+              jsonOutput(summary);
+            } else {
+              console.log(`[dry-run] endpoint: ${summary.endpoint}`);
+            }
+            return;
+          }
+
+          const result = await tc.getProfileBanner(handle);
+
+          if (mode === "json") {
+            jsonOutput(result);
+          } else if (!result.hasBanner) {
+            console.log(`@${handle} has no banner set`);
+          } else {
+            console.log(`Banner sizes for @${handle}:`);
+            for (const [size, url] of Object.entries(result.sizes)) {
+              console.log(`  ${size}: ${url}`);
+            }
+            if (opts.save) {
+              const sizeKey = opts.size ?? "1500x500";
+              const imageUrl = result.sizes[sizeKey] ?? Object.values(result.sizes)[0];
+              if (!imageUrl) throw new Error("No banner URL available");
+              const { writeFileSync } = await import("node:fs");
+              const imgRes = await fetch(imageUrl);
+              if (!imgRes.ok) throw new Error(`Failed to download banner: ${imgRes.status}`);
+              const buf = Buffer.from(await imgRes.arrayBuffer());
+              writeFileSync(opts.save, buf);
+              console.log(`Saved to: ${opts.save}`);
+            }
+          }
+        } catch (err: any) {
+          console.error(`Error: ${err.message}`);
+          process.exit(1);
+        }
+      },
+    );
+
+  bannerCmd
+    .command("backup")
+    .description("Download and save the current banner to ~/.xai-cli/banner-backups/")
+    .option("--handle <name>", "Screen name (default: authenticated user)")
+    .option("--dir <dir>", "Directory to save backup (default: ~/.xai-cli/banner-backups)")
+    .action(
+      async (opts: { handle?: string; dir?: string }) => {
+        try {
+          const tc = getTwitterClient();
+          const handle = await resolveBannerHandle(tc, opts.handle);
+          const result = await tc.getProfileBanner(handle);
+
+          if (!result.hasBanner) {
+            console.log(`@${handle} has no banner set — nothing to backup`);
+            return;
+          }
+
+          // Pick largest size
+          const imageUrl = result.sizes["1500x500"] ?? Object.values(result.sizes)[0];
+          if (!imageUrl) throw new Error("No banner URL available");
+
+          const { homedir } = await import("node:os");
+          const { join } = await import("node:path");
+          const { mkdirSync, writeFileSync } = await import("node:fs");
+
+          const dir = opts.dir ?? join(homedir(), ".xai-cli", "banner-backups");
+          mkdirSync(dir, { recursive: true });
+          const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+          const filename = `${handle}-${timestamp}.jpg`;
+          const savePath = join(dir, filename);
+
+          const imgRes = await fetch(imageUrl);
+          if (!imgRes.ok) throw new Error(`Failed to download banner: ${imgRes.status}`);
+          const buf = Buffer.from(await imgRes.arrayBuffer());
+          writeFileSync(savePath, buf);
+          console.log(`Banner backed up: ${savePath}`);
+        } catch (err: any) {
+          console.error(`Error: ${err.message}`);
+          process.exit(1);
+        }
+      },
+    );
+
+  /** Shared implementation for banner set and banner restore */
+  async function runBannerSet(imagePath: string, opts: { dryRun?: boolean }, tc: TwitterClient): Promise<void> {
+    const mode = getOutputMode();
+    const { readFileSync, existsSync } = await import("node:fs");
+    const { extname } = await import("node:path");
+
+    if (!existsSync(imagePath)) {
+      throw new Error(`File not found: ${imagePath}`);
+    }
+    const ext = extname(imagePath).replace(/^\./, "").toLowerCase();
+    const imageData = readFileSync(imagePath);
+    const imageBase64 = imageData.toString("base64");
+
+    // Validate before dry-run output so the user gets the error early
+    tc.validateBannerImage(imageBase64, ext);
+
+    if (opts.dryRun) {
+      const summary = {
+        dry_run: true,
+        endpoint: "POST https://api.twitter.com/1.1/account/update_profile_banner.json",
+        image_path: imagePath,
+        ext,
+        base64_length: imageBase64.length,
+        note: "banner is NOT included in OAuth signature base string",
+      };
+      if (mode === "json") {
+        jsonOutput(summary);
+      } else {
+        console.log(`[dry-run] endpoint: ${summary.endpoint}`);
+        console.log(`[dry-run] image: ${imagePath} (${ext}, ${imageBase64.length} base64 chars)`);
+        console.log(`[dry-run] note: banner excluded from OAuth signature`);
+      }
+      return;
+    }
+
+    await tc.updateProfileBanner(imageBase64, ext);
+
+    if (mode === "json") {
+      jsonOutput({ updated: true, image_path: imagePath });
+    } else {
+      console.log(`Banner updated from: ${imagePath}`);
+    }
+  }
+
+  bannerCmd
+    .command("set <image-path>")
+    .description("Upload a new profile banner image (jpg/jpeg/png/webp/gif, ≤5MB)")
+    .option("--dry-run", "Do not upload; print what would be sent")
+    .action(
+      async (imagePath: string, opts: { dryRun?: boolean }) => {
+        try {
+          const tc = getTwitterClient();
+          await runBannerSet(imagePath, opts, tc);
+        } catch (err: any) {
+          console.error(`Error: ${err.message}`);
+          process.exit(1);
+        }
+      },
+    );
+
+  bannerCmd
+    .command("restore <backup-path>")
+    .description("Restore banner from a backup file (alias for banner set)")
+    .option("--dry-run", "Do not upload; print what would be sent")
+    .action(
+      async (backupPath: string, opts: { dryRun?: boolean }) => {
+        try {
+          const tc = getTwitterClient();
+          await runBannerSet(backupPath, opts, tc);
+        } catch (err: any) {
+          console.error(`Error: ${err.message}`);
+          process.exit(1);
+        }
+      },
+    );
+
+  bannerCmd
+    .command("remove")
+    .description("Remove the profile banner image")
+    .option("--dry-run", "Do not send; print what would be requested")
+    .action(
+      async (opts: { dryRun?: boolean }) => {
+        try {
+          const tc = getTwitterClient();
+          const mode = getOutputMode();
+
+          if (opts.dryRun) {
+            const summary = {
+              dry_run: true,
+              endpoint: "POST https://api.twitter.com/1.1/account/remove_profile_banner.json",
+            };
+            if (mode === "json") {
+              jsonOutput(summary);
+            } else {
+              console.log(`[dry-run] endpoint: ${summary.endpoint}`);
+            }
+            return;
+          }
+
+          await tc.removeProfileBanner();
+
+          if (mode === "json") {
+            jsonOutput({ removed: true });
+          } else {
+            console.log("Banner removed successfully");
+          }
+        } catch (err: any) {
+          console.error(`Error: ${err.message}`);
+          process.exit(1);
+        }
+      },
+    );
+
   return program;
 }
 
