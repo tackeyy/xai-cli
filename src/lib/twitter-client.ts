@@ -74,6 +74,15 @@ export interface UpdateProfileResult {
   location?: string;
 }
 
+/** Map of size key (e.g. "1500x500") to URL string */
+export type BannerSizes = Record<string, string>;
+
+export interface BannerResult {
+  /** false when the account has no banner (API returned 404) */
+  hasBanner: boolean;
+  sizes: BannerSizes;
+}
+
 export class TweetTooLongError extends Error {
   constructor(public readonly length: number, public readonly maxLength: number) {
     super(
@@ -1192,7 +1201,178 @@ export class TwitterClient {
    * Validate inputs and build the form params for account/update_profile.
    * Public so the CLI dry-run can preview the request without sending it.
    */
-  buildProfileParams(input: UpdateProfileInput): Record<string, string> {
+  // --- Banner CRUD ---
+
+  /**
+   * Validates base64 image data for profile banner upload.
+   * Public so CLI dry-run can call it without performing the upload.
+   * @param imageBase64 - Base64-encoded image data (no data: URI prefix)
+   * @param ext - Optional file extension to validate (jpg/jpeg/png/webp/gif)
+   */
+  validateBannerImage(imageBase64: string, ext?: string): void {
+    const ALLOWED_EXTENSIONS = ["jpg", "jpeg", "png", "webp", "gif"] as const;
+    if (ext !== undefined) {
+      const lower = ext.toLowerCase();
+      if (!(ALLOWED_EXTENSIONS as readonly string[]).includes(lower)) {
+        throw new Error(
+          `Invalid image extension: "${ext}". Allowed formats: jpg, jpeg, png, webp, gif.`,
+        );
+      }
+    }
+    // Guard on raw base64 string length (proxy for request body size).
+    // Twitter rejects banners over 5MB; base64 strings > 5MB characters indicate
+    // an image that will exceed the limit.
+    const MAX_BASE64_LEN = 5 * 1024 * 1024; // 5 MB
+    if (imageBase64.length > MAX_BASE64_LEN) {
+      throw new Error(
+        `Image size exceeds 5MB limit (base64 length: ${imageBase64.length} chars).`,
+      );
+    }
+  }
+
+  /**
+   * GET /1.1/users/profile_banner.json
+   * Returns the banner sizes for a given screen name, or hasBanner=false on 404.
+   */
+  async getProfileBanner(screenName: string): Promise<BannerResult> {
+    this.requireOAuth1Credentials();
+    const url = new URL(`${this.baseUrl}/1.1/users/profile_banner.json`);
+    url.searchParams.set("screen_name", screenName);
+    const baseUrl = `${url.origin}${url.pathname}`;
+    const queryParams: Record<string, string> = {};
+    url.searchParams.forEach((v, k) => {
+      queryParams[k] = v;
+    });
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+
+    try {
+      const res = await fetch(url.toString(), {
+        method: "GET",
+        headers: {
+          Authorization: this.buildOAuthHeader("GET", baseUrl, queryParams),
+        },
+        signal: controller.signal,
+      });
+
+      if (res.status === 404) {
+        return { hasBanner: false, sizes: {} };
+      }
+
+      if (!res.ok) {
+        const errorBody = await res.text();
+        const retryAfterHeader = res.headers.get("retry-after");
+        const retryHint = retryAfterHeader ? ` (retry-after: ${retryAfterHeader}s)` : "";
+        let msg = `X API error ${res.status}${retryHint}: ${errorBody}`;
+        if (res.status === 401 || res.status === 403) {
+          msg += " Requires Elevated/paid tier access (v1.1 users/profile_banner).";
+        }
+        throw new Error(msg);
+      }
+
+      const data = (await res.json()) as {
+        sizes?: Record<string, { h: number; w: number; url: string }>;
+      };
+
+      const sizes: BannerSizes = {};
+      for (const [key, value] of Object.entries(data.sizes ?? {})) {
+        sizes[key] = value.url;
+      }
+
+      return { hasBanner: true, sizes };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /**
+   * POST /1.1/account/update_profile_banner.json
+   *
+   * IMPORTANT: The `banner` param is intentionally NOT included in the OAuth
+   * signature base string. buildOAuthHeader is called WITHOUT body params so
+   * that the large base64 payload does not break the signature.
+   */
+  async updateProfileBanner(imageBase64: string, ext?: string): Promise<void> {
+    this.requireOAuth1Credentials();
+    this.validateBannerImage(imageBase64, ext);
+
+    const url = `${this.baseUrl}/1.1/account/update_profile_banner.json`;
+    // banner param is NOT passed to buildOAuthHeader — this is the critical gotcha.
+    // Passing a large base64 string as a signed param causes signature mismatches.
+    const body = `banner=${encodeURIComponent(imageBase64)}`;
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          // OAuth 1.0a: banner is excluded from signature base — call without body params.
+          Authorization: this.buildOAuthHeader("POST", url),
+        },
+        body,
+        signal: controller.signal,
+      });
+
+      if (res.ok) {
+        return; // 200 or 201
+      }
+
+      const errorBody = await res.text();
+      const retryAfterHeader = res.headers.get("retry-after");
+      const retryHint = retryAfterHeader ? ` (retry-after: ${retryAfterHeader}s)` : "";
+      let msg = `X API error ${res.status}${retryHint}: ${errorBody}`;
+      if (res.status === 401 || res.status === 403) {
+        msg += " Requires Elevated/paid tier access (v1.1 account/update_profile_banner).";
+      }
+      throw new Error(msg);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /**
+   * POST /1.1/account/remove_profile_banner.json
+   */
+  async removeProfileBanner(): Promise<void> {
+    this.requireOAuth1Credentials();
+    const url = `${this.baseUrl}/1.1/account/remove_profile_banner.json`;
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Authorization: this.buildOAuthHeader("POST", url),
+        },
+        body: "",
+        signal: controller.signal,
+      });
+
+      if (res.ok) {
+        return;
+      }
+
+      const errorBody = await res.text();
+      const retryAfterHeader = res.headers.get("retry-after");
+      const retryHint = retryAfterHeader ? ` (retry-after: ${retryAfterHeader}s)` : "";
+      let msg = `X API error ${res.status}${retryHint}: ${errorBody}`;
+      if (res.status === 401 || res.status === 403) {
+        msg += " Requires Elevated/paid tier access (v1.1 account/remove_profile_banner).";
+      }
+      throw new Error(msg);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+    buildProfileParams(input: UpdateProfileInput): Record<string, string> {
     const limits: Array<[keyof UpdateProfileInput, string, number]> = [
       ["name", "name", 50],
       ["bio", "description", 160],

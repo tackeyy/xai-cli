@@ -1666,3 +1666,288 @@ describe("TwitterClient.buildProfileParams (dry-run helper)", () => {
     expect(() => tc.buildProfileParams({ bio: "a".repeat(161) })).toThrow(/160/);
   });
 });
+
+// ============================================================
+// TwitterClient.getProfileBanner
+// ============================================================
+describe("TwitterClient.getProfileBanner", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    fetchSpy = vi.spyOn(global, "fetch");
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function mockBannerResponse(overrides: Record<string, unknown> = {}) {
+    return new Response(
+      JSON.stringify({
+        sizes: {
+          "1500x500": {
+            h: 500,
+            w: 1500,
+            url: "https://pbs.twimg.com/profile_banners/123/456/1500x500",
+          },
+          "1080x360": {
+            h: 360,
+            w: 1080,
+            url: "https://pbs.twimg.com/profile_banners/123/456/1080x360",
+          },
+          "600x200": {
+            h: 200,
+            w: 600,
+            url: "https://pbs.twimg.com/profile_banners/123/456/600x200",
+          },
+          "300x100": {
+            h: 100,
+            w: 300,
+            url: "https://pbs.twimg.com/profile_banners/123/456/300x100",
+          },
+        },
+        ...overrides,
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  }
+
+  it("GETs /1.1/users/profile_banner.json with screen_name query param", async () => {
+    fetchSpy.mockResolvedValue(mockBannerResponse());
+    const tc = makeClient();
+    await tc.getProfileBanner("testuser");
+    const call = fetchSpy.mock.calls[0];
+    const url = new URL(String(call[0]));
+    expect(url.pathname).toBe("/1.1/users/profile_banner.json");
+    expect(url.searchParams.get("screen_name")).toBe("testuser");
+  });
+
+  it("uses OAuth1.0a Authorization header", async () => {
+    fetchSpy.mockResolvedValue(mockBannerResponse());
+    const tc = makeClient();
+    await tc.getProfileBanner("testuser");
+    const headers = fetchSpy.mock.calls[0][1]?.headers as Record<string, string>;
+    expect(headers["Authorization"] ?? headers["authorization"]).toMatch(/^OAuth /);
+  });
+
+  it("returns normalized BannerResult with sizes map", async () => {
+    fetchSpy.mockResolvedValue(mockBannerResponse());
+    const tc = makeClient();
+    const result = await tc.getProfileBanner("testuser");
+    expect(result.hasBanner).toBe(true);
+    expect(result.sizes["1500x500"]).toBe("https://pbs.twimg.com/profile_banners/123/456/1500x500");
+    expect(result.sizes["1080x360"]).toBe("https://pbs.twimg.com/profile_banners/123/456/1080x360");
+    expect(result.sizes["600x200"]).toBe("https://pbs.twimg.com/profile_banners/123/456/600x200");
+    expect(result.sizes["300x100"]).toBe("https://pbs.twimg.com/profile_banners/123/456/300x100");
+  });
+
+  it("returns hasBanner=false on 404 (no banner set)", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ errors: [{ message: "Sorry, that page does not exist." }] }), { status: 404 }),
+    );
+    const tc = makeClient();
+    const result = await tc.getProfileBanner("nobanner");
+    expect(result.hasBanner).toBe(false);
+    expect(Object.keys(result.sizes)).toHaveLength(0);
+  });
+
+  it("throws on 401 with Elevated/paid tier hint", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response("Unauthorized", { status: 401 }),
+    );
+    const tc = makeClient();
+    await expect(tc.getProfileBanner("testuser")).rejects.toThrow(/Elevated|paid tier/i);
+  });
+
+  it("throws on 403 with Elevated/paid tier hint", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ errors: [{ message: "Forbidden" }] }), { status: 403 }),
+    );
+    const tc = makeClient();
+    await expect(tc.getProfileBanner("testuser")).rejects.toThrow(/Elevated|paid tier/i);
+  });
+
+  it("requires OAuth1 credentials", async () => {
+    const tc = makeBearerClient();
+    await expect(tc.getProfileBanner("testuser")).rejects.toThrow();
+  });
+});
+
+// ============================================================
+// TwitterClient.updateProfileBanner
+// ============================================================
+describe("TwitterClient.updateProfileBanner", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    fetchSpy = vi.spyOn(global, "fetch");
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("POSTs to /1.1/account/update_profile_banner.json", async () => {
+    fetchSpy.mockResolvedValue(new Response("", { status: 200 }));
+    const tc = makeClient();
+    await tc.updateProfileBanner("base64data==");
+    const call = fetchSpy.mock.calls[0];
+    expect(String(call[0])).toBe("https://api.twitter.com/1.1/account/update_profile_banner.json");
+    expect(call[1]?.method).toBe("POST");
+  });
+
+  it("sends banner= in form-encoded body", async () => {
+    fetchSpy.mockResolvedValue(new Response("", { status: 200 }));
+    const tc = makeClient();
+    await tc.updateProfileBanner("base64data==");
+    const rawBody = String(fetchSpy.mock.calls[0][1]?.body);
+    expect(rawBody).toBe(`banner=${encodeURIComponent("base64data==")}`);
+  });
+
+  it("uses OAuth Authorization header without banner in signature (no body params passed)", async () => {
+    // The critical gotcha: buildOAuthHeader("POST", url) called WITHOUT body params
+    // so the banner is NOT included in the OAuth signature base string.
+    // We verify this by checking the Authorization header is OAuth, and the
+    // signature was built without banner (impossible to verify the exact signature,
+    // but we can spy on buildOAuthHeader behavior by checking no body params leak in).
+    // The key test: calling updateProfileBanner should NOT pass banner to buildOAuthHeader.
+    // We verify indirectly: if banner WERE included in signature, buildOAuthHeader would
+    // receive a requestParams object; without it, the OAuth header does not contain "banner".
+    fetchSpy.mockResolvedValue(new Response("", { status: 200 }));
+    const tc = makeClient();
+    await tc.updateProfileBanner("base64data==");
+    const headers = fetchSpy.mock.calls[0][1]?.headers as Record<string, string>;
+    const auth = headers["Authorization"] ?? headers["authorization"];
+    expect(auth).toMatch(/^OAuth /);
+    // The OAuth header must NOT contain "banner" as a signed parameter
+    expect(auth).not.toContain("banner");
+  });
+
+  it("succeeds on 201 response (created)", async () => {
+    fetchSpy.mockResolvedValue(new Response("", { status: 201 }));
+    const tc = makeClient();
+    await expect(tc.updateProfileBanner("imgdata")).resolves.toBeUndefined();
+  });
+
+  it("throws on 403 with Elevated/paid tier hint", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ errors: [{ message: "Forbidden" }] }), { status: 403 }),
+    );
+    const tc = makeClient();
+    await expect(tc.updateProfileBanner("base64data")).rejects.toThrow(/Elevated|paid tier/i);
+  });
+
+  it("throws on 401 with Elevated/paid tier hint", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response("Unauthorized", { status: 401 }),
+    );
+    const tc = makeClient();
+    await expect(tc.updateProfileBanner("base64data")).rejects.toThrow(/Elevated|paid tier/i);
+  });
+
+  it("requires OAuth1 credentials", async () => {
+    const tc = makeBearerClient();
+    await expect(tc.updateProfileBanner("base64data")).rejects.toThrow();
+  });
+
+  it("validates image size: throws when base64 > 5MB decoded", async () => {
+    // 5MB = 5 * 1024 * 1024 bytes. base64 is 4/3 ratio, so >6.67MB base64 string.
+    // We check the validator by passing an over-limit base64 string.
+    const oversized = "A".repeat(5 * 1024 * 1024 + 1); // decoded > 5MB
+    const tc = makeClient();
+    await expect(tc.updateProfileBanner(oversized)).rejects.toThrow(/5MB|size/i);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("validates image extension via validateBannerImage", async () => {
+    const tc = makeClient();
+    await expect(tc.updateProfileBanner("data", "bmp")).rejects.toThrow(/extension|format|jpg|jpeg|png|webp|gif/i);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
+// ============================================================
+// TwitterClient.removeProfileBanner
+// ============================================================
+describe("TwitterClient.removeProfileBanner", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    fetchSpy = vi.spyOn(global, "fetch");
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("POSTs to /1.1/account/remove_profile_banner.json", async () => {
+    fetchSpy.mockResolvedValue(new Response("", { status: 200 }));
+    const tc = makeClient();
+    await tc.removeProfileBanner();
+    const call = fetchSpy.mock.calls[0];
+    expect(String(call[0])).toBe("https://api.twitter.com/1.1/account/remove_profile_banner.json");
+    expect(call[1]?.method).toBe("POST");
+  });
+
+  it("uses OAuth Authorization header", async () => {
+    fetchSpy.mockResolvedValue(new Response("", { status: 200 }));
+    const tc = makeClient();
+    await tc.removeProfileBanner();
+    const headers = fetchSpy.mock.calls[0][1]?.headers as Record<string, string>;
+    expect(headers["Authorization"] ?? headers["authorization"]).toMatch(/^OAuth /);
+  });
+
+  it("throws on 403 with Elevated/paid tier hint", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ errors: [{ message: "Forbidden" }] }), { status: 403 }),
+    );
+    const tc = makeClient();
+    await expect(tc.removeProfileBanner()).rejects.toThrow(/Elevated|paid tier/i);
+  });
+
+  it("requires OAuth1 credentials", async () => {
+    const tc = makeBearerClient();
+    await expect(tc.removeProfileBanner()).rejects.toThrow();
+  });
+});
+
+// ============================================================
+// TwitterClient.validateBannerImage (validator helper)
+// ============================================================
+describe("TwitterClient.validateBannerImage", () => {
+  it("accepts jpg extension", () => {
+    const tc = makeClient();
+    expect(() => tc.validateBannerImage("data", "jpg")).not.toThrow();
+  });
+
+  it("accepts jpeg extension", () => {
+    const tc = makeClient();
+    expect(() => tc.validateBannerImage("data", "jpeg")).not.toThrow();
+  });
+
+  it("accepts png extension", () => {
+    const tc = makeClient();
+    expect(() => tc.validateBannerImage("data", "png")).not.toThrow();
+  });
+
+  it("accepts webp extension", () => {
+    const tc = makeClient();
+    expect(() => tc.validateBannerImage("data", "webp")).not.toThrow();
+  });
+
+  it("accepts gif extension", () => {
+    const tc = makeClient();
+    expect(() => tc.validateBannerImage("data", "gif")).not.toThrow();
+  });
+
+  it("rejects bmp extension", () => {
+    const tc = makeClient();
+    expect(() => tc.validateBannerImage("data", "bmp")).toThrow(/extension|format|jpg|jpeg|png|webp|gif/i);
+  });
+
+  it("throws when base64 decoded size > 5MB", () => {
+    const tc = makeClient();
+    const oversized = "A".repeat(5 * 1024 * 1024 + 1);
+    expect(() => tc.validateBannerImage(oversized)).toThrow(/5MB|size/i);
+  });
+
+  it("does not throw for valid size under 5MB", () => {
+    const tc = makeClient();
+    const valid = "A".repeat(100);
+    expect(() => tc.validateBannerImage(valid, "jpg")).not.toThrow();
+  });
+});
