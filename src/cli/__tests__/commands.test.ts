@@ -150,6 +150,18 @@ function createMockTwitterClient(): TwitterClient {
       data: [{ id: "e1", text: "hello DM", event_type: "MessageCreate", sender_id: "42", created_at: "2026-01-01T00:00:00.000Z", dm_conversation_id: "conv99" }],
       meta: { result_count: 1 },
     }),
+    getProfileBanner: vi.fn().mockResolvedValue({
+      hasBanner: true,
+      sizes: {
+        "1500x500": "https://pbs.twimg.com/profile_banners/123/456/1500x500",
+        "1080x360": "https://pbs.twimg.com/profile_banners/123/456/1080x360",
+        "600x200": "https://pbs.twimg.com/profile_banners/123/456/600x200",
+        "300x100": "https://pbs.twimg.com/profile_banners/123/456/300x100",
+      },
+    }),
+    updateProfileBanner: vi.fn().mockResolvedValue(undefined),
+    removeProfileBanner: vi.fn().mockResolvedValue(undefined),
+    validateBannerImage: vi.fn(),
   };
   return mock as TwitterClient;
 }
@@ -1145,6 +1157,250 @@ describe("CLI commands", () => {
       });
       await run(["bookmarks", "grep", "zzz"], undefined, tc);
       expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('No bookmarks matching'));
+    });
+  });
+
+  // ============================================================
+  // banner commands
+  // ============================================================
+  describe("banner get", () => {
+    it("calls getProfileBanner with authenticated user screen_name when no --handle", async () => {
+      const { twitterClient } = await run(["banner", "get"]);
+      // resolves via getAuthenticatedUser → username="myself"
+      expect(twitterClient.getProfileBanner).toHaveBeenCalledWith("myself");
+    });
+
+    it("calls getProfileBanner with --handle when provided", async () => {
+      const { twitterClient } = await run(["banner", "get", "--handle", "someuser"]);
+      expect(twitterClient.getProfileBanner).toHaveBeenCalledWith("someuser");
+    });
+
+    it("strips @ from --handle", async () => {
+      const { twitterClient } = await run(["banner", "get", "--handle", "@someuser"]);
+      expect(twitterClient.getProfileBanner).toHaveBeenCalledWith("someuser");
+    });
+
+    it("outputs banner sizes in human mode", async () => {
+      await run(["banner", "get"]);
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("1500x500"));
+    });
+
+    it("outputs JSON in json mode", async () => {
+      await run(["--json", "banner", "get"]);
+      const parsed = JSON.parse(logSpy.mock.calls[0][0]);
+      expect(parsed.hasBanner).toBe(true);
+      expect(parsed.sizes["1500x500"]).toContain("pbs.twimg.com");
+    });
+
+    it("shows no-banner message when hasBanner=false", async () => {
+      const tc = createMockTwitterClient();
+      (tc.getProfileBanner as ReturnType<typeof vi.fn>).mockResolvedValue({
+        hasBanner: false,
+        sizes: {},
+      });
+      await run(["banner", "get"], undefined, tc);
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("no banner"));
+    });
+
+    it("does NOT call getProfileBanner in --dry-run mode", async () => {
+      const { twitterClient } = await run(["banner", "get", "--dry-run"]);
+      expect(twitterClient.getProfileBanner).not.toHaveBeenCalled();
+      expect(twitterClient.getAuthenticatedUser).not.toHaveBeenCalled();
+    });
+
+    it("prints error and exit 1 on failure", async () => {
+      const tc = createMockTwitterClient();
+      (tc.getProfileBanner as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new Error("X API error 403: Forbidden"),
+      );
+      await run(["banner", "get"], undefined, tc);
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("X API error 403"));
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    });
+
+    it("downloads and saves the banner with --save", async () => {
+      const { tmpdir } = await import("node:os");
+      const { join } = await import("node:path");
+      const { existsSync, rmSync } = await import("node:fs");
+      const out = join(tmpdir(), "xai-get-save-test.jpg");
+      const tc = createMockTwitterClient();
+      const fetchSpy = vi.spyOn(global, "fetch").mockResolvedValue(
+        new Response(new Uint8Array([0xff, 0xd8, 0xff]).buffer, { status: 200 }),
+      );
+      try {
+        await run(["banner", "get", "--save", out], undefined, tc);
+        expect(existsSync(out)).toBe(true);
+        expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Saved to"));
+      } finally {
+        fetchSpy.mockRestore();
+        if (existsSync(out)) rmSync(out);
+      }
+    });
+  });
+
+  describe("banner backup", () => {
+    it("calls getProfileBanner and logs backup path", async () => {
+      // Note: actual file download is skipped when fetch is not fully mocked here;
+      // we only verify the getProfileBanner call happens.
+      // The backup subcommand resolves handle via getAuthenticatedUser.
+      const tc = createMockTwitterClient();
+      // Mock fetch for the image download
+      const fetchSpy = vi.spyOn(global, "fetch").mockResolvedValue(
+        new Response(new Uint8Array([0xff, 0xd8, 0xff]).buffer, { status: 200 }),
+      );
+      try {
+        await run(["banner", "backup"], undefined, tc);
+        expect(tc.getProfileBanner).toHaveBeenCalledWith("myself");
+      } finally {
+        fetchSpy.mockRestore();
+      }
+    });
+
+    it("shows no-banner message when hasBanner=false", async () => {
+      const tc = createMockTwitterClient();
+      (tc.getProfileBanner as ReturnType<typeof vi.fn>).mockResolvedValue({
+        hasBanner: false,
+        sizes: {},
+      });
+      await run(["banner", "backup"], undefined, tc);
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("no banner"));
+    });
+
+    it("does NOT call getProfileBanner in dry-run", async () => {
+      const { twitterClient } = await run(["banner", "backup", "--dry-run", "--handle", "someuser"]);
+      expect(twitterClient.getProfileBanner).not.toHaveBeenCalled();
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("[dry-run]"));
+    });
+
+    it("errors and exits 1 when image download fails", async () => {
+      const tc = createMockTwitterClient();
+      const fetchSpy = vi.spyOn(global, "fetch").mockResolvedValue(new Response("", { status: 403 }));
+      try {
+        await run(["banner", "backup"], undefined, tc);
+        expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("Failed to download"));
+        expect(exitSpy).toHaveBeenCalledWith(1);
+      } finally {
+        fetchSpy.mockRestore();
+      }
+    });
+
+    it("outputs JSON with saved path in --json mode", async () => {
+      const { tmpdir } = await import("node:os");
+      const { join } = await import("node:path");
+      const tc = createMockTwitterClient();
+      const fetchSpy = vi.spyOn(global, "fetch").mockResolvedValue(
+        new Response(new Uint8Array([0xff, 0xd8, 0xff]).buffer, { status: 200 }),
+      );
+      try {
+        await run(["--json", "banner", "backup", "--dir", join(tmpdir(), "xai-banner-test")], undefined, tc);
+        const parsed = JSON.parse(logSpy.mock.calls[0][0]);
+        expect(parsed.saved).toBe(true);
+        expect(parsed.path).toContain("myself-");
+      } finally {
+        fetchSpy.mockRestore();
+      }
+    });
+  });
+
+  describe("banner set", () => {
+    it("calls updateProfileBanner with base64 data", async () => {
+      // Create a tiny temp file
+      const { writeFileSync, mkdirSync } = await import("node:fs");
+      const { tmpdir } = await import("node:os");
+      const { join } = await import("node:path");
+      const tmp = join(tmpdir(), "test-banner.jpg");
+      writeFileSync(tmp, Buffer.from([0xff, 0xd8, 0xff, 0xe0])); // JPEG magic bytes
+      const { twitterClient } = await run(["banner", "set", tmp]);
+      expect(twitterClient.updateProfileBanner).toHaveBeenCalled();
+    });
+
+    it("does NOT call updateProfileBanner in --dry-run mode", async () => {
+      const { writeFileSync } = await import("node:fs");
+      const { tmpdir } = await import("node:os");
+      const { join } = await import("node:path");
+      const tmp = join(tmpdir(), "test-banner-dry.jpg");
+      writeFileSync(tmp, Buffer.from([0xff, 0xd8, 0xff, 0xe0]));
+      const { twitterClient } = await run(["banner", "set", tmp, "--dry-run"]);
+      expect(twitterClient.updateProfileBanner).not.toHaveBeenCalled();
+    });
+
+    it("exits 1 when file does not exist", async () => {
+      await run(["banner", "set", "/nonexistent/path/image.jpg"]);
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    });
+
+    it("exits 1 when extension is invalid", async () => {
+      const { writeFileSync } = await import("node:fs");
+      const { tmpdir } = await import("node:os");
+      const { join } = await import("node:path");
+      const tmp = join(tmpdir(), "test.bmp");
+      writeFileSync(tmp, Buffer.from([0x42, 0x4d]));
+      const tc = createMockTwitterClient();
+      (tc.validateBannerImage as ReturnType<typeof vi.fn>).mockImplementation(() => {
+        throw new Error("Invalid image extension: bmp");
+      });
+      await run(["banner", "set", tmp], undefined, tc);
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    });
+
+    it("outputs [dry-run] message in dry-run mode", async () => {
+      const { writeFileSync } = await import("node:fs");
+      const { tmpdir } = await import("node:os");
+      const { join } = await import("node:path");
+      const tmp = join(tmpdir(), "test-banner-dry2.jpg");
+      writeFileSync(tmp, Buffer.from([0xff, 0xd8, 0xff, 0xe0]));
+      await run(["banner", "set", tmp, "--dry-run"]);
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("[dry-run]"));
+    });
+  });
+
+  describe("banner remove", () => {
+    it("calls removeProfileBanner", async () => {
+      const { twitterClient } = await run(["banner", "remove"]);
+      expect(twitterClient.removeProfileBanner).toHaveBeenCalled();
+    });
+
+    it("does NOT call removeProfileBanner in --dry-run mode", async () => {
+      const { twitterClient } = await run(["banner", "remove", "--dry-run"]);
+      expect(twitterClient.removeProfileBanner).not.toHaveBeenCalled();
+    });
+
+    it("outputs confirmation in human mode", async () => {
+      await run(["banner", "remove"]);
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Banner removed"));
+    });
+
+    it("outputs JSON in json mode", async () => {
+      await run(["--json", "banner", "remove"]);
+      const parsed = JSON.parse(logSpy.mock.calls[0][0]);
+      expect(parsed.removed).toBe(true);
+    });
+
+    it("outputs [dry-run] message in dry-run mode", async () => {
+      await run(["banner", "remove", "--dry-run"]);
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("[dry-run]"));
+    });
+
+    it("prints error and exit 1 on failure", async () => {
+      const tc = createMockTwitterClient();
+      (tc.removeProfileBanner as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new Error("X API error 403: Forbidden"),
+      );
+      await run(["banner", "remove"], undefined, tc);
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("X API error 403"));
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    });
+  });
+
+  describe("banner restore", () => {
+    it("calls updateProfileBanner (alias for set)", async () => {
+      const { writeFileSync } = await import("node:fs");
+      const { tmpdir } = await import("node:os");
+      const { join } = await import("node:path");
+      const tmp = join(tmpdir(), "test-restore.jpg");
+      writeFileSync(tmp, Buffer.from([0xff, 0xd8, 0xff, 0xe0]));
+      const { twitterClient } = await run(["banner", "restore", tmp]);
+      expect(twitterClient.updateProfileBanner).toHaveBeenCalled();
     });
   });
 
