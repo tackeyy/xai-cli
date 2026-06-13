@@ -200,6 +200,7 @@ function createMockTwitterClient(): TwitterClient {
       meta: { result_count: 2 },
     }),
     deleteTweet: vi.fn().mockResolvedValue({ deleted: true }),
+    uploadMedia: vi.fn().mockResolvedValue("media_default_id"),
   };
   return mock as TwitterClient;
 }
@@ -1079,6 +1080,84 @@ describe("CLI commands", () => {
       ]);
       const parsed = JSON.parse(logSpy.mock.calls[0][0]);
       expect(parsed.payload.reply).toEqual({ in_reply_to_tweet_id: "42" });
+    });
+
+    it("--media calls uploadMedia for each file then postTweet with media_ids", async () => {
+      const { writeFileSync, unlinkSync } = await import("node:fs");
+      const { tmpdir } = await import("node:os");
+      const { join } = await import("node:path");
+      const tmp1 = join(tmpdir(), "test-post-media1.jpg");
+      const tmp2 = join(tmpdir(), "test-post-media2.png");
+      writeFileSync(tmp1, Buffer.from([0xff, 0xd8, 0xff, 0xe0]));
+      writeFileSync(tmp2, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+
+      const tc = createMockTwitterClient();
+      (tc as any).uploadMedia = vi.fn()
+        .mockResolvedValueOnce("media_aaa")
+        .mockResolvedValueOnce("media_bbb");
+
+      try {
+        const { twitterClient } = await run(
+          ["post", "--text", "with media", "--media", tmp1, tmp2],
+          undefined,
+          tc,
+        );
+        expect((twitterClient as any).uploadMedia).toHaveBeenCalledTimes(2);
+        expect((twitterClient as any).uploadMedia).toHaveBeenCalledWith(tmp1);
+        expect((twitterClient as any).uploadMedia).toHaveBeenCalledWith(tmp2);
+        expect(twitterClient.postTweet).toHaveBeenCalledWith(
+          expect.objectContaining({ mediaIds: ["media_aaa", "media_bbb"] }),
+        );
+      } finally {
+        unlinkSync(tmp1);
+        unlinkSync(tmp2);
+      }
+    });
+
+    it("--media --dry-run shows file paths and media_type without calling uploadMedia or postTweet", async () => {
+      const { writeFileSync, unlinkSync } = await import("node:fs");
+      const { tmpdir } = await import("node:os");
+      const { join } = await import("node:path");
+      const tmp = join(tmpdir(), "test-dry-media.jpg");
+      writeFileSync(tmp, Buffer.from([0xff, 0xd8, 0xff, 0xe0]));
+
+      const tc = createMockTwitterClient();
+      (tc as any).uploadMedia = vi.fn();
+
+      try {
+        await run(["post", "--dry-run", "--text", "hi", "--media", tmp], undefined, tc);
+        expect((tc as any).uploadMedia).not.toHaveBeenCalled();
+        expect(tc.postTweet).not.toHaveBeenCalled();
+        const allOutput = logSpy.mock.calls.map((c) => String(c[0])).join("\n");
+        expect(allOutput).toContain("[dry-run]");
+        expect(allOutput).toContain(tmp);
+        expect(allOutput).toMatch(/image\/jpeg/);
+      } finally {
+        unlinkSync(tmp);
+      }
+    });
+
+    it("--media --dry-run --json includes media_files array in JSON output", async () => {
+      const { writeFileSync, unlinkSync } = await import("node:fs");
+      const { tmpdir } = await import("node:os");
+      const { join } = await import("node:path");
+      const tmp = join(tmpdir(), "test-dry-media-json.png");
+      writeFileSync(tmp, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+
+      const tc = createMockTwitterClient();
+      (tc as any).uploadMedia = vi.fn();
+
+      try {
+        await run(["--json", "post", "--dry-run", "--text", "hi", "--media", tmp], undefined, tc);
+        const parsed = JSON.parse(logSpy.mock.calls[0][0]);
+        expect(parsed.dry_run).toBe(true);
+        expect(parsed.media_files).toBeDefined();
+        expect(parsed.media_files).toHaveLength(1);
+        expect(parsed.media_files[0].path).toBe(tmp);
+        expect(parsed.media_files[0].media_type).toBe("image/png");
+      } finally {
+        unlinkSync(tmp);
+      }
     });
   });
 

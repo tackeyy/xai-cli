@@ -2267,6 +2267,299 @@ describe("TwitterClient.deleteTweet", () => {
 });
 
 // ============================================================
+// TwitterClient.uploadMedia (chunked upload)
+// ============================================================
+describe("TwitterClient.uploadMedia", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    fetchSpy = vi.spyOn(global, "fetch");
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  // Helpers to create mock INIT / FINALIZE responses
+  function mockInitResponse(mediaId = "media_111") {
+    return new Response(
+      JSON.stringify({ media_id_string: mediaId, expires_after_secs: 86400 }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  }
+
+  function mockFinalizeResponse(mediaId = "media_111", processingInfo?: { state: string; check_after_secs?: number; progress_percent?: number }) {
+    const body: Record<string, unknown> = { media_id_string: mediaId, size: 1024 };
+    if (processingInfo) body.processing_info = processingInfo;
+    return new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  function mockStatusResponse(mediaId: string, state: string, checkAfterSecs = 1) {
+    return new Response(
+      JSON.stringify({
+        media_id_string: mediaId,
+        processing_info: { state, check_after_secs: checkAfterSecs, progress_percent: 50 },
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  }
+
+  it("sends INIT, APPEND, FINALIZE in order and returns media_id_string", async () => {
+    // We need a real temp file for this test
+    const { writeFileSync, unlinkSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const tmp = join(tmpdir(), "test-upload.jpg");
+    writeFileSync(tmp, Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x01])); // small JPEG
+
+    fetchSpy
+      .mockResolvedValueOnce(mockInitResponse("media_111"))  // INIT
+      .mockResolvedValueOnce(new Response(JSON.stringify({}), { status: 200 })) // APPEND
+      .mockResolvedValueOnce(mockFinalizeResponse("media_111")); // FINALIZE
+
+    try {
+      const tc = makeClient();
+      const result = await tc.uploadMedia(tmp);
+      expect(result).toBe("media_111");
+
+      expect(fetchSpy).toHaveBeenCalledTimes(3);
+
+      // INIT: command=INIT
+      const initCall = fetchSpy.mock.calls[0];
+      expect(String(initCall[0])).toContain("/2/media/upload");
+      const initBody = new URLSearchParams(String(initCall[1]?.body));
+      expect(initBody.get("command")).toBe("INIT");
+      expect(initBody.get("media_type")).toBe("image/jpeg");
+      expect(initBody.get("media_category")).toBe("tweet_image");
+      expect(Number(initBody.get("total_bytes"))).toBeGreaterThan(0);
+
+      // APPEND: command=APPEND with multipart
+      const appendCall = fetchSpy.mock.calls[1];
+      expect(String(appendCall[0])).toContain("/2/media/upload");
+      const appendHeaders = appendCall[1]?.headers as Record<string, string>;
+      expect(appendHeaders["Authorization"]).toMatch(/^OAuth /);
+
+      // FINALIZE: command=FINALIZE
+      const finalizeCall = fetchSpy.mock.calls[2];
+      expect(String(finalizeCall[0])).toContain("/2/media/upload");
+      const finalizeBody = new URLSearchParams(String(finalizeCall[1]?.body));
+      expect(finalizeBody.get("command")).toBe("FINALIZE");
+      expect(finalizeBody.get("media_id")).toBe("media_111");
+    } finally {
+      unlinkSync(tmp);
+    }
+  });
+
+  it("polls STATUS when FINALIZE returns processing_info with state=pending", async () => {
+    const { writeFileSync, unlinkSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const tmp = join(tmpdir(), "test-upload-video.mp4");
+    writeFileSync(tmp, Buffer.from([0x00, 0x00, 0x00, 0x00, 0x66, 0x74, 0x79, 0x70])); // fake mp4
+
+    fetchSpy
+      .mockResolvedValueOnce(mockInitResponse("media_222"))
+      .mockResolvedValueOnce(new Response(JSON.stringify({}), { status: 200 }))
+      .mockResolvedValueOnce(mockFinalizeResponse("media_222", { state: "pending", check_after_secs: 1 }))
+      .mockResolvedValueOnce(mockStatusResponse("media_222", "in_progress", 1))
+      .mockResolvedValueOnce(mockStatusResponse("media_222", "succeeded"));
+
+    try {
+      const tc = makeClient();
+      const result = await tc.uploadMedia(tmp);
+      expect(result).toBe("media_222");
+
+      // Should have called STATUS twice (in_progress → succeeded)
+      expect(fetchSpy).toHaveBeenCalledTimes(5);
+
+      // STATUS calls
+      const statusCall = fetchSpy.mock.calls[3];
+      const statusUrl = new URL(String(statusCall[0]));
+      expect(statusUrl.searchParams.get("command")).toBe("STATUS");
+      expect(statusUrl.searchParams.get("media_id")).toBe("media_222");
+    } finally {
+      unlinkSync(tmp);
+    }
+  });
+
+  it("throws when FINALIZE processing_info.state=failed", async () => {
+    const { writeFileSync, unlinkSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const tmp = join(tmpdir(), "test-upload-fail.mp4");
+    writeFileSync(tmp, Buffer.from([0x00, 0x00, 0x00, 0x01]));
+
+    fetchSpy
+      .mockResolvedValueOnce(mockInitResponse("media_333"))
+      .mockResolvedValueOnce(new Response(JSON.stringify({}), { status: 200 }))
+      .mockResolvedValueOnce(mockFinalizeResponse("media_333", { state: "failed" }));
+
+    try {
+      const tc = makeClient();
+      await expect(tc.uploadMedia(tmp)).rejects.toThrow(/failed|processing/i);
+    } finally {
+      unlinkSync(tmp);
+    }
+  });
+
+  it("throws when file does not exist", async () => {
+    const tc = makeClient();
+    await expect(tc.uploadMedia("/nonexistent/path/file.jpg")).rejects.toThrow();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("detects media_type and media_category from extension: png → tweet_image", async () => {
+    const { writeFileSync, unlinkSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const tmp = join(tmpdir(), "test-upload.png");
+    writeFileSync(tmp, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+
+    fetchSpy
+      .mockResolvedValueOnce(mockInitResponse())
+      .mockResolvedValueOnce(new Response(JSON.stringify({}), { status: 200 }))
+      .mockResolvedValueOnce(mockFinalizeResponse());
+
+    try {
+      const tc = makeClient();
+      await tc.uploadMedia(tmp);
+      const initBody = new URLSearchParams(String(fetchSpy.mock.calls[0][1]?.body));
+      expect(initBody.get("media_type")).toBe("image/png");
+      expect(initBody.get("media_category")).toBe("tweet_image");
+    } finally {
+      unlinkSync(tmp);
+    }
+  });
+
+  it("detects media_type and media_category from extension: gif → tweet_gif", async () => {
+    const { writeFileSync, unlinkSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const tmp = join(tmpdir(), "test-upload.gif");
+    writeFileSync(tmp, Buffer.from([0x47, 0x49, 0x46, 0x38]));
+
+    fetchSpy
+      .mockResolvedValueOnce(mockInitResponse())
+      .mockResolvedValueOnce(new Response(JSON.stringify({}), { status: 200 }))
+      .mockResolvedValueOnce(mockFinalizeResponse());
+
+    try {
+      const tc = makeClient();
+      await tc.uploadMedia(tmp);
+      const initBody = new URLSearchParams(String(fetchSpy.mock.calls[0][1]?.body));
+      expect(initBody.get("media_type")).toBe("image/gif");
+      expect(initBody.get("media_category")).toBe("tweet_gif");
+    } finally {
+      unlinkSync(tmp);
+    }
+  });
+
+  it("detects media_type and media_category from extension: mp4 → tweet_video", async () => {
+    const { writeFileSync, unlinkSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const tmp = join(tmpdir(), "test-upload.mp4");
+    writeFileSync(tmp, Buffer.from([0x00, 0x00, 0x00, 0x01]));
+
+    fetchSpy
+      .mockResolvedValueOnce(mockInitResponse())
+      .mockResolvedValueOnce(new Response(JSON.stringify({}), { status: 200 }))
+      .mockResolvedValueOnce(mockFinalizeResponse());
+
+    try {
+      const tc = makeClient();
+      await tc.uploadMedia(tmp);
+      const initBody = new URLSearchParams(String(fetchSpy.mock.calls[0][1]?.body));
+      expect(initBody.get("media_type")).toBe("video/mp4");
+      expect(initBody.get("media_category")).toBe("tweet_video");
+    } finally {
+      unlinkSync(tmp);
+    }
+  });
+
+  it("requires OAuth1 credentials", async () => {
+    const tc = makeBearerClient();
+    await expect(tc.uploadMedia("/tmp/test.jpg")).rejects.toThrow(/OAuth 1.0a credentials/);
+  });
+});
+
+// ============================================================
+// TwitterClient.postTweet with mediaIds (extension)
+// ============================================================
+describe("TwitterClient.postTweet with mediaIds", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    fetchSpy = vi.spyOn(global, "fetch");
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("includes media.media_ids in payload when mediaIds provided", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ data: { id: "111", text: "with media" } }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    const tc = makeClient();
+    await tc.postTweet({ text: "with media", mediaIds: ["media_abc", "media_def"] });
+
+    const call = fetchSpy.mock.calls[0];
+    const body = JSON.parse(String(call[1]?.body));
+    expect(body.media).toEqual({ media_ids: ["media_abc", "media_def"] });
+  });
+
+  it("does NOT include media in payload when mediaIds is not provided (backward compat)", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ data: { id: "222", text: "no media" } }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    const tc = makeClient();
+    await tc.postTweet({ text: "no media" });
+
+    const body = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
+    expect(body.media).toBeUndefined();
+  });
+
+  it("does NOT include media when mediaIds is empty array", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ data: { id: "333", text: "empty media" } }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    const tc = makeClient();
+    await tc.postTweet({ text: "empty media", mediaIds: [] });
+
+    const body = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
+    expect(body.media).toBeUndefined();
+  });
+
+  it("buildPostPayload includes media when mediaIds provided", () => {
+    const tc = makeClient();
+    const payload = tc.buildPostPayload({ text: "hi", mediaIds: ["m1"] });
+    expect((payload as any).media).toEqual({ media_ids: ["m1"] });
+  });
+
+  it("buildPostPayload does NOT include media when mediaIds absent", () => {
+    const tc = makeClient();
+    const payload = tc.buildPostPayload({ text: "hi" });
+    expect((payload as any).media).toBeUndefined();
+  });
+});
+
+// ============================================================
 // TwitterClient.validateBannerImage (validator helper)
 // ============================================================
 describe("TwitterClient.validateBannerImage", () => {

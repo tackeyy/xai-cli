@@ -1,4 +1,6 @@
 import { createHmac } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { extname } from "node:path";
 import { computeTweetLength, TWEET_MAX_LENGTH } from "./tweet-length.js";
 import type {
   DmAvailability,
@@ -47,12 +49,18 @@ export interface PostTweetInput {
   maxLength?: number;
   noLengthCheck?: boolean;
   quoteTweetId?: string;
+  mediaIds?: string[];
 }
 
 export interface PostTweetPayload {
   text: string;
   reply?: { in_reply_to_tweet_id: string };
   quote_tweet_id?: string;
+  media?: { media_ids: string[] };
+}
+
+export interface UploadMediaResult {
+  media_id_string: string;
 }
 
 export interface PostTweetResult {
@@ -740,6 +748,185 @@ export class TwitterClient {
     }
   }
 
+  // --- Media upload (chunked) ---
+
+  /**
+   * Determine MIME type and media_category from file extension.
+   * Returns undefined for unknown extensions (caller should decide how to handle).
+   */
+  private getMediaTypeInfo(filePath: string): { mediaType: string; mediaCategory: string } | undefined {
+    const ext = extname(filePath).toLowerCase().replace(".", "");
+    switch (ext) {
+      case "jpg":
+      case "jpeg":
+        return { mediaType: "image/jpeg", mediaCategory: "tweet_image" };
+      case "png":
+        return { mediaType: "image/png", mediaCategory: "tweet_image" };
+      case "gif":
+        return { mediaType: "image/gif", mediaCategory: "tweet_gif" };
+      case "mp4":
+        return { mediaType: "video/mp4", mediaCategory: "tweet_video" };
+      default:
+        return undefined;
+    }
+  }
+
+  /**
+   * Upload media using the chunked upload protocol:
+   * INIT → APPEND → FINALIZE → (optional) STATUS polling until succeeded.
+   * @param filePath - Absolute path to the media file.
+   * @returns media_id_string from the API.
+   */
+  async uploadMedia(filePath: string): Promise<string> {
+    this.requireOAuth1Credentials();
+
+    // Read file bytes (throws if not found)
+    const fileBytes = readFileSync(filePath);
+    const totalBytes = fileBytes.length;
+
+    const mediaTypeInfo = this.getMediaTypeInfo(filePath);
+    const mediaType = mediaTypeInfo?.mediaType ?? "image/jpeg";
+    const mediaCategory = mediaTypeInfo?.mediaCategory ?? "tweet_image";
+
+    const uploadUrl = `${this.baseUrl}/2/media/upload`;
+
+    // --- INIT ---
+    const initParams = new URLSearchParams({
+      command: "INIT",
+      total_bytes: String(totalBytes),
+      media_type: mediaType,
+      media_category: mediaCategory,
+    });
+
+    const initController = new AbortController();
+    const initTimer = setTimeout(() => initController.abort(), this.timeoutMs);
+    let mediaId: string;
+    try {
+      const initRes = await fetch(uploadUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Authorization: this.buildOAuthHeader("POST", uploadUrl),
+        },
+        body: initParams.toString(),
+        signal: initController.signal,
+      });
+      if (!initRes.ok) {
+        const errorBody = await initRes.text();
+        throw new Error(`X API media upload INIT error ${initRes.status}: ${errorBody}`);
+      }
+      const initData = (await initRes.json()) as { media_id_string: string };
+      mediaId = initData.media_id_string;
+    } finally {
+      clearTimeout(initTimer);
+    }
+
+    // --- APPEND ---
+    const formData = new FormData();
+    formData.append("command", "APPEND");
+    formData.append("media_id", mediaId);
+    formData.append("segment_index", "0");
+    formData.append("media", new Blob([fileBytes], { type: mediaType }));
+
+    const appendController = new AbortController();
+    const appendTimer = setTimeout(() => appendController.abort(), this.timeoutMs);
+    try {
+      const appendRes = await fetch(uploadUrl, {
+        method: "POST",
+        headers: {
+          // OAuth header without body params (multipart body is not signed)
+          Authorization: this.buildOAuthHeader("POST", uploadUrl),
+        },
+        body: formData,
+        signal: appendController.signal,
+      });
+      if (!appendRes.ok) {
+        const errorBody = await appendRes.text();
+        throw new Error(`X API media upload APPEND error ${appendRes.status}: ${errorBody}`);
+      }
+    } finally {
+      clearTimeout(appendTimer);
+    }
+
+    // --- FINALIZE ---
+    const finalizeParams = new URLSearchParams({
+      command: "FINALIZE",
+      media_id: mediaId,
+    });
+
+    const finalizeController = new AbortController();
+    const finalizeTimer = setTimeout(() => finalizeController.abort(), this.timeoutMs);
+    let processingInfo: { state: string; check_after_secs?: number } | undefined;
+    try {
+      const finalizeRes = await fetch(uploadUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Authorization: this.buildOAuthHeader("POST", uploadUrl),
+        },
+        body: finalizeParams.toString(),
+        signal: finalizeController.signal,
+      });
+      if (!finalizeRes.ok) {
+        const errorBody = await finalizeRes.text();
+        throw new Error(`X API media upload FINALIZE error ${finalizeRes.status}: ${errorBody}`);
+      }
+      const finalizeData = (await finalizeRes.json()) as {
+        media_id_string: string;
+        processing_info?: { state: string; check_after_secs?: number };
+      };
+      processingInfo = finalizeData.processing_info;
+    } finally {
+      clearTimeout(finalizeTimer);
+    }
+
+    // --- STATUS polling (only when processing is needed) ---
+    if (processingInfo) {
+      let state = processingInfo.state;
+      let checkAfterSecs = processingInfo.check_after_secs ?? 1;
+
+      while (state === "pending" || state === "in_progress") {
+        await new Promise((resolve) => setTimeout(resolve, checkAfterSecs * 1000));
+
+        const statusUrl = new URL(uploadUrl);
+        statusUrl.searchParams.set("command", "STATUS");
+        statusUrl.searchParams.set("media_id", mediaId);
+
+        const statusController = new AbortController();
+        const statusTimer = setTimeout(() => statusController.abort(), this.timeoutMs);
+        try {
+          const statusRes = await fetch(statusUrl.toString(), {
+            method: "GET",
+            headers: {
+              Authorization: this.buildOAuthHeader("GET", uploadUrl, {
+                command: "STATUS",
+                media_id: mediaId,
+              }),
+            },
+            signal: statusController.signal,
+          });
+          if (!statusRes.ok) {
+            const errorBody = await statusRes.text();
+            throw new Error(`X API media upload STATUS error ${statusRes.status}: ${errorBody}`);
+          }
+          const statusData = (await statusRes.json()) as {
+            processing_info: { state: string; check_after_secs?: number };
+          };
+          state = statusData.processing_info.state;
+          checkAfterSecs = statusData.processing_info.check_after_secs ?? 5;
+        } finally {
+          clearTimeout(statusTimer);
+        }
+      }
+
+      if (state === "failed") {
+        throw new Error(`Media upload processing failed for media_id: ${mediaId}`);
+      }
+    }
+
+    return mediaId;
+  }
+
   // --- Mentions ---
 
   async getMentions(
@@ -1359,6 +1546,9 @@ export class TwitterClient {
     }
     if (input.quoteTweetId) {
       payload.quote_tweet_id = input.quoteTweetId;
+    }
+    if (input.mediaIds && input.mediaIds.length > 0) {
+      payload.media = { media_ids: input.mediaIds };
     }
     return payload;
   }

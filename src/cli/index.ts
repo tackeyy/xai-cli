@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { Command, InvalidArgumentError } from "commander";
+import { extname } from "node:path";
 import { XaiClient } from "../lib/client.js";
 import { TwitterClient, TweetTooLongError } from "../lib/twitter-client.js";
 import type { DmCheckResult, TwitterBookmarkResponse } from "../lib/twitter-types.js";
@@ -82,6 +83,23 @@ function formatProfileHuman(
   if (profile.created_at) console.log(`created_at=${profile.created_at}`);
   console.log(`--- bio (${bioCharCount}字 / ${bioLineCount}行) ---`);
   console.log(profile.description ? profile.description : "(bio未設定)");
+}
+
+function getMediaTypeForPath(filePath: string): string {
+  const ext = extname(filePath).toLowerCase().replace(".", "");
+  switch (ext) {
+    case "jpg":
+    case "jpeg":
+      return "image/jpeg";
+    case "png":
+      return "image/png";
+    case "gif":
+      return "image/gif";
+    case "mp4":
+      return "video/mp4";
+    default:
+      return "application/octet-stream";
+  }
 }
 
 function buildPostInput(opts: {
@@ -796,6 +814,8 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
       parsePositiveInteger,
     )
     .option("--no-length-check", "Skip local tweet-length validation")
+    .option("--media <path...>", "Media file path(s) to attach (1-4 files)")
+    .option("--alt-text <text...>", "Alt text for each media file (same order as --media)")
     .option("--dry-run", "Do not actually post; print the request payload")
     .action(
       async (opts: {
@@ -805,6 +825,8 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
         quoteTweetId?: string;
         maxLength?: number;
         lengthCheck?: boolean;
+        media?: string[];
+        altText?: string[];
         dryRun?: boolean;
       }) => {
         try {
@@ -818,30 +840,56 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
             const payload = dummy.buildPostPayload(buildPostInput(opts));
             const effectiveMaxLength = opts.lengthCheck === false ? null : (opts.maxLength ?? TWEET_MAX_LENGTH);
             const mode = getOutputMode();
-            const summary = {
-              dry_run: true,
-              weighted_length: computeTweetLength(payload.text),
-              max_length: effectiveMaxLength,
-              endpoint: "POST https://api.twitter.com/2/tweets",
-              payload,
-            };
+
+            const mediaFiles = opts.media?.map((p) => ({
+              path: p,
+              media_type: getMediaTypeForPath(p),
+            }));
+
             if (mode === "json") {
+              const summary: Record<string, unknown> = {
+                dry_run: true,
+                weighted_length: computeTweetLength(payload.text),
+                max_length: effectiveMaxLength,
+                endpoint: "POST https://api.twitter.com/2/tweets",
+                payload,
+              };
+              if (mediaFiles?.length) summary.media_files = mediaFiles;
               jsonOutput(summary);
             } else {
               console.log(
                 effectiveMaxLength === null
-                  ? `[dry-run] weighted length: ${summary.weighted_length}/unlimited`
-                  : `[dry-run] weighted length: ${summary.weighted_length}/${effectiveMaxLength}`,
+                  ? `[dry-run] weighted length: ${computeTweetLength(payload.text)}/unlimited`
+                  : `[dry-run] weighted length: ${computeTweetLength(payload.text)}/${effectiveMaxLength}`,
               );
-              console.log(`[dry-run] endpoint: ${summary.endpoint}`);
+              console.log(`[dry-run] endpoint: POST https://api.twitter.com/2/tweets`);
               console.log(`[dry-run] payload: ${JSON.stringify(payload, null, 2)}`);
+              if (mediaFiles?.length) {
+                for (const mf of mediaFiles) {
+                  console.log(`[dry-run] media: ${mf.path} (${mf.media_type})`);
+                }
+              }
             }
             return;
           }
 
           const tc = getTwitterClient();
           const mode = getOutputMode();
-          const result = await tc.postTweet(buildPostInput(opts));
+
+          // Upload media files if provided
+          let mediaIds: string[] | undefined;
+          if (opts.media && opts.media.length > 0) {
+            mediaIds = [];
+            for (const mediaPath of opts.media) {
+              const mediaId = await tc.uploadMedia(mediaPath);
+              mediaIds.push(mediaId);
+            }
+          }
+
+          const postInput = buildPostInput(opts);
+          if (mediaIds?.length) postInput.mediaIds = mediaIds;
+
+          const result = await tc.postTweet(postInput);
 
           if (mode === "json") {
             jsonOutput({
