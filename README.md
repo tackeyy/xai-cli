@@ -1,6 +1,6 @@
 # xai-cli
 
-xAI API (Grok) の `x_search` ツールをラップする CLI ツール。X (Twitter) の投稿検索・分析を簡単に実行できます。
+xAI API (Grok) の `x_search` ツールおよび X API v2 をラップする CLI ツール。X (Twitter) の投稿検索・分析・投稿・プロフィール管理などを簡単に実行できます。
 
 ## インストール
 
@@ -20,7 +20,7 @@ npm link
 export XAI_API_KEY="your-xai-api-key"
 ```
 
-### X API OAuth 1.0a（reply / post / update-profile コマンド用）
+### X API OAuth 1.0a（reply / post / post-thread / delete / update-profile / home-timeline コマンド用）
 
 ```bash
 export X_API_KEY="your-x-api-key"
@@ -29,13 +29,13 @@ export X_ACCESS_TOKEN="your-x-access-token"
 export X_ACCESS_TOKEN_SECRET="your-x-access-token-secret"
 ```
 
-### X API Bearer Token（following コマンド用）
+### X API Bearer Token（following / followers / timeline / tweet --raw など）
 
 ```bash
 export X_BEARER_TOKEN="your-bearer-token"
 ```
 
-### X API OAuth 2.0 User Token（bookmarks コマンド用）
+### X API OAuth 2.0 User Token（bookmarks / dm-send / mute / block コマンド用）
 
 ```bash
 export X_OAUTH2_USER_TOKEN="your-oauth2-user-token"
@@ -321,13 +321,292 @@ xai bookmarks grep "税理士法人" --all --ignore-case
 xai bookmarks grep "freee" --folder-id 1146654567674912769
 xai bookmarks grep "AI" --field text --plain-pattern
 
+# ブックマーク追加（--dry-run 推奨）
+xai bookmarks add 1234567890123456789 --dry-run
+xai bookmarks add 1234567890123456789
+
+# ブックマーク削除（--dry-run 推奨）
+xai bookmarks remove 1234567890123456789 --dry-run
+xai bookmarks remove 1234567890123456789
+
 # JSON 出力
 xai --json bookmarks list
 xai --json bookmarks grep "test"
 ```
 
 > **注意**: `bookmarks` コマンドには `X_OAUTH2_USER_TOKEN` が必要です（本人のブックマークのみアクセス可能）。  
-> サーバー側検索 API がないため、`grep` はブックマークを取得してからローカルでフィルタリングします。
+> サーバー側検索 API がないため、`grep` はブックマークを取得してからローカルでフィルタリングします。  
+> `add` / `remove` は書き込み操作のため `--dry-run` で事前確認を推奨します。
+
+### フォロワー一覧を取得
+
+```bash
+# ハンドル指定
+xai followers @zeimu_ai
+
+# ユーザーID指定
+xai followers 2244994945
+
+# 全件取得
+xai followers @zeimu_ai --all
+
+# フィールド指定
+xai followers @zeimu_ai --user-fields description,public_metrics
+
+# JSON 出力
+xai --json followers @zeimu_ai
+```
+
+> **注意**: `followers` コマンドには `X_BEARER_TOKEN` が必要です。
+
+### Lists 操作
+
+```bash
+# ユーザーの所有リスト取得
+xai lists @elonmusk
+xai lists @elonmusk --list-fields description,member_count
+xai --json lists @elonmusk
+
+# リストのツイート取得
+xai list-tweets 1234567890123456789
+xai list-tweets 1234567890123456789 --max-results 50
+xai --json list-tweets 1234567890123456789
+
+# リストのメンバー取得
+xai list-members 1234567890123456789
+xai list-members 1234567890123456789 --user-fields description
+xai --json list-members 1234567890123456789
+```
+
+### 複数ツイートの一括取得
+
+```bash
+# スペース区切りで複数 ID を指定（最大 100 件）
+xai tweets 111111111 222222222 333333333
+
+# カンマ区切り文字列でも可
+xai tweets 111111111,222222222,333333333
+
+# フィールド指定
+xai tweets 111111111 222222222 --tweet-fields created_at,public_metrics --expansions author_id
+
+# JSON 出力
+xai --json tweets 111111111 222222222
+```
+
+### ツイートカウント取得
+
+直近 7 日間のクエリにマッチするツイート数を時系列で取得します（X API v2 `GET /2/tweets/counts/recent`）。
+
+```bash
+# 日次カウント（デフォルト）
+xai counts "AI 会計"
+
+# 時間単位で取得
+xai counts "ChatGPT" --granularity hour
+
+# 期間指定
+xai counts "M&A" --from 2026-06-01T00:00:00Z --to 2026-06-07T00:00:00Z
+
+# JSON 出力
+xai --json counts "AI 会計"
+```
+
+出力例（human モード）:
+```
+Total tweets: 1234
+2026-06-07T00:00:00.000Z	2026-06-07T23:59:59.000Z	456
+...
+```
+
+### ユーザー検索
+
+```bash
+# クエリでユーザーを検索
+xai user-search "AI startup"
+xai user-search "zeimu" --max-results 10
+
+# JSON 出力
+xai --json user-search "M&A"
+```
+
+> **注意**: `user-search` は `GET /2/users/search` を使用します。**Basic+ ティア以上が必要な可能性があります**。低いティアでは 403 が返ることがあります。
+
+### 全期間ツイート検索
+
+```bash
+# 全期間検索（Academic Research アーカイブ）
+xai search-all "M&A AI" --from 2023-01-01T00:00:00Z --to 2023-12-31T23:59:59Z
+xai search-all "OpenAI" --max-results 100
+
+# JSON 出力
+xai --json search-all "AI 会計"
+```
+
+> **重要**: `search-all` は `GET /2/tweets/search/all` を使用します。**Pro+ ティア（Academic Research アクセス）が必須**です。低いティアでは 403 が返ります。
+
+### トレンド取得
+
+WOEID（Where On Earth ID）でエリアのトレンドを取得します。
+
+```bash
+# 日本のトレンド（WOEID: 23424856）
+xai trends 23424856
+
+# 東京のトレンド（WOEID: 1118370）
+xai trends 1118370
+
+# JSON 出力
+xai --json trends 23424856
+```
+
+主な WOEID 一覧: 日本=23424856, 東京=1118370, 米国=23424977, 全世界=1
+
+> **注意**: `trends` は `GET /2/trends/by/woeid/:woeid` を使用します。**エンドポイント仕様が流動的**であり、ティア制約の可能性があります。
+
+### Twitter Spaces 検索
+
+```bash
+# キーワードで Spaces を検索
+xai spaces "AI 会計"
+xai spaces "startup" --max-results 20
+
+# JSON 出力
+xai --json spaces "M&A"
+```
+
+> **注意**: `spaces` は `GET /2/spaces/search` を使用します。**エンドポイント仕様が流動的**であり、ティア制約の可能性があります。
+
+### ツイートを削除する
+
+```bash
+# dry-run（削除せずにリクエスト内容を確認）
+xai delete 1234567890123456789 --dry-run
+
+# 実際に削除する
+xai delete 1234567890123456789
+```
+
+> **注意**: `delete` は X API OAuth 1.0a 認証が必要です（`X_API_KEY`, `X_API_SECRET`, `X_ACCESS_TOKEN`, `X_ACCESS_TOKEN_SECRET`）。**破壊操作のため `--dry-run` で事前確認を推奨します**。
+
+### DM を送信する
+
+```bash
+# dry-run（送信せずにリクエスト内容を確認）
+xai dm-send @username "こんにちは" --dry-run
+
+# OAuth2 ユーザートークンで送信（デフォルト）
+xai dm-send @username "こんにちは"
+
+# OAuth1 で送信
+xai dm-send @username "こんにちは" --auth oauth1
+```
+
+> **注意**: `dm-send` には `X_OAUTH2_USER_TOKEN` (デフォルト) または OAuth1.0a 認証が必要です。**破壊操作のため `--dry-run` で事前確認を推奨します**。
+
+### スレッドを投稿する
+
+```bash
+# 3 件のツイートをスレッドとして投稿（dry-run）
+xai post-thread "最初のツイート" "続き..." "まとめ" --dry-run
+
+# 実際に投稿する
+xai post-thread "最初のツイート" "続き..." "まとめ"
+
+# JSON 出力
+xai --json post-thread "tweet1" "tweet2"
+```
+
+各引数が 1 件のツイートになり、順番に返信チェーンとして投稿されます。  
+> **注意**: `post-thread` には X API OAuth 1.0a 認証が必要です。**複数ツイートを連続投稿する破壊操作のため `--dry-run` で事前確認を推奨します**。
+
+### ミュート / ブロック操作
+
+これらのコマンドはすべて `--dry-run` が**必須**です（`requiredOption` で強制）。
+
+```bash
+# ミュート（dry-run のみ）
+xai mute @username --dry-run
+
+# アンミュート（dry-run のみ）
+xai unmute @username --dry-run
+
+# ブロック（dry-run のみ）
+xai block @username --dry-run
+
+# アンブロック（dry-run のみ）
+xai unblock @username --dry-run
+
+# OAuth1 認証を明示
+xai mute @username --auth oauth1 --dry-run
+```
+
+> **注意**: `mute` / `unmute` / `block` / `unblock` は高影響操作のため、現在は `--dry-run` のみ対応しています（実際の操作は dry-run オプションを外しても実行されません）。認証には `X_OAUTH2_USER_TOKEN` (デフォルト) または OAuth1.0a が必要です。
+
+### ツイートにメディアを添付する（post コマンド拡張）
+
+```bash
+# 画像 1 枚を添付して投稿
+xai post --text "スクリーンショット" --media /path/to/image.png
+
+# 複数ファイルを添付（最大 4 枚）
+xai post --text "写真まとめ" --media img1.jpg img2.jpg img3.jpg
+
+# alt テキスト付き
+xai post --text "グラフ" --media chart.png --alt-text "AI市場の成長グラフ"
+
+# dry-run でペイロード確認
+xai post --dry-run --text "test" --media /path/to/image.png
+```
+
+> メディアは `POST https://upload.twitter.com/1.1/media/upload.json` でアップロード後、tweet に紐付けられます。
+
+### 投票（Poll）付きツイートを投稿する（post コマンド拡張）
+
+```bash
+# 2 択の投票を作成（デフォルト: 1440 分 = 24 時間）
+xai post --text "どちらが好き？" --poll "TypeScript" "Python"
+
+# 4 択、12 時間
+xai post --text "好きな言語は？" --poll "TS" "Python" "Rust" "Go" --poll-duration 720
+
+# dry-run
+xai post --dry-run --text "test poll" --poll "Yes" "No"
+```
+
+### 非公開メトリクスの取得（tweet コマンド拡張）
+
+```bash
+# 非公開メトリクス + organic_metrics を含めて取得（OAuth1 必須）
+xai tweet 1234567890123456789 --raw --metrics
+
+# JSON 出力
+xai --json tweet 1234567890123456789 --raw --metrics
+```
+
+`--metrics` を指定すると `non_public_metrics`（impression_count 等）と `organic_metrics` が追加されます。  
+> **注意**: 非公開メトリクスは **Basic+ ティア以上が必要な可能性があります**。また自分が投稿したツイートのみ取得可能です。
+
+### ホームタイムライン取得
+
+```bash
+# 認証ユーザーのホームタイムライン（フォロー全体・時系列）
+xai home-timeline
+
+# OAuth1 Access Token から userId を自動導出
+xai home-timeline --max-results 20
+
+# 明示的に userId を指定
+xai home-timeline 2244994945
+
+# リツイート・リプライを除外
+xai home-timeline --exclude retweets,replies
+
+# JSON 出力
+xai --json home-timeline
+```
+
+> **注意**: `home-timeline` は OAuth1.0a 認証が必要です（`X_ACCESS_TOKEN` から userId を自動解決）。
 
 ### 出力フォーマット
 
@@ -336,6 +615,21 @@ xai --json search "AI"    # JSON出力
 xai --plain search "AI"   # プレーンテキスト出力
 xai search "AI"           # ヒューマンリーダブル（デフォルト）
 ```
+
+## 未実装機能とその理由
+
+以下の機能は意図的に未実装です。
+
+| 機能 | 理由 |
+|---|---|
+| いいね（Like）作成・取消 | 2026年時点で Enterprise ティア限定（$42,000/月級）。動作確認が現実的でないため未実装 |
+| リツイート作成・取消 | 同上（Enterprise 限定） |
+| フォロー・アンフォロー操作 | 同上（Enterprise 限定） |
+| Filtered Stream | Pro+ ティア限定かつ常駐プロセス前提。単発実行の CLI 設計と噛み合わないため未実装 |
+| Sampled Stream | 同上 |
+| Note Tweet（長文投稿） | X API 仕様が流動的・未確定のため見送り |
+
+> `mute` / `block` / `unmute` / `unblock` は実装済みですが、現バージョンでは `--dry-run` のみ動作します（実際の操作は安全確認のため保留）。
 
 ## ライブラリとして使用
 
