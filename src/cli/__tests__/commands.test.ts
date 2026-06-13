@@ -384,6 +384,70 @@ describe("CLI commands", () => {
     });
   });
 
+  describe("profile get", () => {
+    it("calls getUserProfileByUsername with the stripped handle", async () => {
+      const { twitterClient } = await run(["profile", "get", "@zeimu_ai"]);
+      expect(twitterClient.getUserProfileByUsername).toHaveBeenCalledWith("zeimu_ai");
+    });
+
+    it("outputs the full profile as JSON with --json", async () => {
+      await run(["--json", "profile", "get", "zeimu_ai"]);
+      const parsed = JSON.parse(logSpy.mock.calls[0][0]);
+      expect(parsed.username).toBe("zeimu_ai");
+      expect(parsed.description).toBe("AI tax");
+      expect(parsed.followers_count).toBe(100);
+      expect(parsed.bio_char_count).toBe(6);
+      expect(parsed.bio_line_count).toBe(1);
+    });
+
+    it("prints the bio verbatim in human mode", async () => {
+      await run(["profile", "get", "zeimu_ai"]);
+      const printed = logSpy.mock.calls.map((c) => c[0]).join("\n");
+      expect(printed).toContain("AI tax");
+      expect(printed).toContain("@zeimu_ai");
+    });
+
+    it("shows bio char and line count in human mode", async () => {
+      await run(["profile", "get", "zeimu_ai"]);
+      const printed = logSpy.mock.calls.map((c) => c[0]).join("\n");
+      expect(printed).toContain("6字");
+      expect(printed).toContain("1行");
+    });
+
+    it("counts line breaks in a multi-line bio", async () => {
+      const tc = createMockTwitterClient();
+      (tc as any).getUserProfileByUsername = vi.fn().mockResolvedValue({
+        id: "1", username: "awakia", name: "A",
+        description: "line1\nline2\nline3",
+        verified: null, created_at: null, followers_count: null, following_count: null,
+      });
+      await run(["--json", "profile", "get", "awakia"], undefined, tc);
+      const parsed = JSON.parse(logSpy.mock.calls[0][0]);
+      expect(parsed.bio_line_count).toBe(3);
+    });
+
+    it("handles a null bio without crashing", async () => {
+      const tc = createMockTwitterClient();
+      (tc as any).getUserProfileByUsername = vi.fn().mockResolvedValue({
+        id: "1", username: "nobio", name: "N",
+        description: null,
+        verified: null, created_at: null, followers_count: null, following_count: null,
+      });
+      await run(["--json", "profile", "get", "nobio"], undefined, tc);
+      const parsed = JSON.parse(logSpy.mock.calls[0][0]);
+      expect(parsed.bio_char_count).toBe(0);
+      expect(parsed.bio_line_count).toBe(0);
+    });
+
+    it("prints error and exits 1 on lookup failure", async () => {
+      const tc = createMockTwitterClient();
+      (tc as any).getUserProfileByUsername = vi.fn().mockRejectedValue(new Error("403 Forbidden"));
+      await run(["profile", "get", "deleted"], undefined, tc);
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("403"));
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    });
+  });
+
   describe("dm-check", () => {
     it("checks DM status for a username without @ prefix", async () => {
       const { twitterClient } = await run(["dm-check", "@zeimu_ai"]);
