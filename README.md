@@ -216,6 +216,9 @@ xai post --text "新しい記事を公開しました" --url "https://zeimu.ai/c
 # 返信として投稿
 xai post --text "ありがとうございます" --reply-to 1234567890123456789
 
+# 引用投稿（Quote Tweet）
+xai post --text "これは興味深い！" --quote-tweet-id 1234567890123456789
+
 # 長文投稿（X Premium などで上限を引き上げる）
 xai post --text "..." --max-length 25000
 
@@ -430,7 +433,7 @@ xai user-search "zeimu" --max-results 10
 xai --json user-search "M&A"
 ```
 
-> **注意**: `user-search` は `GET /2/users/search` を使用します。**Basic+ ティア以上が必要な可能性があります**。低いティアでは 403 が返ることがあります。
+> **注意**: `user-search` は `GET /2/users/search` を使用します。**Pro ティアが必要**です（公式に Pro plan で提供）。低いティアでは 403 が返ります。
 
 ### 全期間ツイート検索
 
@@ -585,7 +588,7 @@ xai --json tweet 1234567890123456789 --raw --metrics
 ```
 
 `--metrics` を指定すると `non_public_metrics`（impression_count 等）と `organic_metrics` が追加されます。  
-> **注意**: 非公開メトリクスは **Basic+ ティア以上が必要な可能性があります**。また自分が投稿したツイートのみ取得可能です。
+> **注意**: 非公開メトリクスは **自分の投稿のみ取得可能**で、**Basic+ ティアが必要**です。`tweet --raw --metrics <id>` で impression 数などを確認できます。
 
 ### ホームタイムライン取得
 
@@ -607,6 +610,95 @@ xai --json home-timeline
 ```
 
 > **注意**: `home-timeline` は OAuth1.0a 認証が必要です（`X_ACCESS_TOKEN` から userId を自動解決）。
+
+### メンション取得
+
+```bash
+# 認証ユーザーへのメンション一覧（最新順）
+xai mentions @yourhandle
+
+# 最大件数を指定
+xai mentions @yourhandle --max-results 50 --count 200
+
+# 次ページトークンを指定して続きを取得
+xai mentions @yourhandle --pagination-token <token>
+
+# JSON 出力
+xai --json mentions @yourhandle
+```
+
+> **注意**: `mentions` は `X_BEARER_TOKEN`（デフォルト）または OAuth1.0a（`--auth oauth1`）が必要です。
+
+### oEmbed で投稿を取得する
+
+```bash
+# HTML 形式で取得（デフォルト）
+xai embed "https://x.com/elonmusk/status/123456789"
+
+# Markdown 形式
+xai embed 123456789 --format md
+
+# テキスト形式
+xai embed 123456789 --format text
+
+# テーマ・言語を指定
+xai embed 123456789 --theme dark --lang en
+```
+
+> **注意**: `embed` は API キーなしで利用できます（公開エンドポイント）。
+
+### プロフィール情報を取得する
+
+```bash
+xai profile get @elonmusk
+xai --json profile get @elonmusk
+```
+
+> **注意**: `profile get` は `X_BEARER_TOKEN` が必要です。
+
+### DM 履歴を取得する
+
+```bash
+# 最新 DM 一覧
+xai dm-history
+
+# 最大件数を指定
+xai dm-history --max-results 50
+
+# 特定の DM 会話に絞り込む
+xai dm-history --dm-conversation-id <conversation-id>
+```
+
+> **注意**: `dm-history` は OAuth1.0a + Elevated / 有料ティアが必要です。
+
+### プロフィールバナー操作
+
+```bash
+# バナー画像を取得（URL 表示）
+xai banner get
+
+# ハンドルを指定して取得し、ファイルに保存
+xai banner get --handle @elonmusk --save banner.jpg
+
+# バナー画像を設定
+xai banner set /path/to/banner.jpg
+
+# dry-run（実際にはアップロードせずに確認）
+xai banner set /path/to/banner.jpg --dry-run
+
+# バックアップを取得
+xai banner backup
+xai banner backup --dir /path/to/backup/dir
+
+# バックアップから復元（set の alias）
+xai banner restore /path/to/banner-backup.jpg
+xai banner restore /path/to/banner-backup.jpg --dry-run
+
+# バナーを削除（dry-run 推奨）
+xai banner remove --dry-run
+```
+
+> **注意**: `banner set` / `restore` / `remove` には X API OAuth 1.0a 認証が必要です。**破壊操作のため `--dry-run` で事前確認を推奨します**。
 
 ### 出力フォーマット
 

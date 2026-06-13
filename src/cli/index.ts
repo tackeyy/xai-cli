@@ -598,7 +598,7 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
     .option("--image", "Analyse attached images via xAI Vision (grok-4.3). Falls back to text-only on error.")
     .option(
       "--metrics",
-      "Include non_public_metrics and organic_metrics (--raw only; requires oauth1 auth). Note: 要Basic+ティアの可能性",
+      "Include non_public_metrics and organic_metrics (--raw only; requires oauth1 auth, own tweets only). Note: 要 Basic+ ティア",
     )
     .option("--tweet-fields <csv>", "Tweet fields (--raw only)", parseCsv)
     .option("--expansions <csv>", "Expansions (--raw only)", parseCsv)
@@ -911,6 +911,11 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
         dryRun?: boolean;
       }) => {
         try {
+          // Warn when --alt-text is specified (metadata update API not yet implemented)
+          if (opts.altText && opts.altText.length > 0) {
+            console.warn("[warn] --alt-text は現在メタデータ反映が未実装です（オプション受付のみ）");
+          }
+
           if (opts.dryRun) {
             const dummy = new TwitterClient({
               apiKey: "dry-run",
@@ -922,9 +927,10 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
             const effectiveMaxLength = opts.lengthCheck === false ? null : (opts.maxLength ?? TWEET_MAX_LENGTH);
             const mode = getOutputMode();
 
-            const mediaFiles = opts.media?.map((p) => ({
+            const mediaFiles = opts.media?.map((p, i) => ({
               path: p,
               media_type: getMediaTypeForPath(p),
+              ...(opts.altText?.[i] !== undefined ? { alt_text: opts.altText[i] } : {}),
             }));
 
             if (mode === "json") {
@@ -947,7 +953,8 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
               console.log(`[dry-run] payload: ${JSON.stringify(payload, null, 2)}`);
               if (mediaFiles?.length) {
                 for (const mf of mediaFiles) {
-                  console.log(`[dry-run] media: ${mf.path} (${mf.media_type})`);
+                  const altStr = mf.alt_text ? ` alt="${mf.alt_text}"` : "";
+                  console.log(`[dry-run] media: ${mf.path} (${mf.media_type})${altStr}`);
                 }
               }
             }
@@ -2284,11 +2291,11 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
     );
 
   // --- user-search (M7): GET /2/users/search ---
-  // Note: 要Basic+ティアの可能性 (Basic+ tier may be required for this endpoint)
+  // Note: 要 Pro ティア (officially provided in Pro plan)
   program
     .command("user-search <query>")
     .description(
-      "Search users by query (GET /2/users/search). Note: May require Basic+ tier access.",
+      "Search users by query (GET /2/users/search). Note: Requires Pro tier access.",
     )
     .option("--user-fields <csv>", "User fields (comma-separated)", parseCsv)
     .option("--expansions <csv>", "Expansions (comma-separated)", parseCsv)

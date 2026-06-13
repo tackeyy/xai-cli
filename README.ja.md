@@ -135,6 +135,24 @@ xai --json home-timeline
 
 > **注意**: OAuth1.0a 認証が必要です（`X_ACCESS_TOKEN` から userId を自動解決）。
 
+### メンション取得
+
+```bash
+# 認証ユーザーへのメンション一覧（最新順）
+xai mentions @yourhandle
+
+# 最大件数を指定
+xai mentions @yourhandle --max-results 50 --count 200
+
+# 次ページトークンを指定して続きを取得
+xai mentions @yourhandle --pagination-token <token>
+
+# JSON 出力
+xai --json mentions @yourhandle
+```
+
+> **注意**: `mentions` は `X_BEARER_TOKEN`（デフォルト）または OAuth1.0a（`--auth oauth1`）が必要です。
+
 ### フォロー一覧を取得
 
 ```bash
@@ -209,7 +227,7 @@ xai user-search "zeimu" --max-results 10
 xai --json user-search "M&A"
 ```
 
-> **注意**: **Basic+ ティア以上が必要な可能性があります**。低いティアでは 403 が返ることがあります。
+> **注意**: **Pro ティアが必要**です（公式に Pro plan で提供）。低いティアでは 403 が返ります。
 
 ### 全期間ツイート検索
 
@@ -255,7 +273,8 @@ xai tweet "https://x.com/elonmusk/status/123456789"
 # X API v2 直叩き（構造化 JSON）
 xai tweet "https://x.com/elonmusk/status/123456789" --raw --json
 
-# 非公開メトリクス取得（OAuth1 必須、Basic+ ティアが必要な可能性あり）
+# 非公開メトリクス取得（自分の投稿のみ、OAuth1 必須、要 Basic+）
+# impression 数などの非公開メトリクスを取得できます
 xai tweet 1234567890123456789 --raw --metrics
 ```
 
@@ -308,6 +327,9 @@ xai post --text "新しい記事" --url "https://example.com/"
 
 # 返信として投稿
 xai post --text "ありがとうございます" --reply-to 1234567890123456789
+
+# 引用投稿（Quote Tweet）
+xai post --text "これは興味深い！" --quote-tweet-id 1234567890123456789
 
 # dry-run（実際には投稿せずペイロードを確認）
 xai post --dry-run --text "チェック" --url "https://example.com"
@@ -447,6 +469,12 @@ xai banner get --handle @elonmusk --save banner.jpg
 xai banner set /path/to/banner.jpg
 xai banner set /path/to/banner.jpg --dry-run
 xai banner backup
+xai banner backup --dir /path/to/backup/dir
+
+# バックアップから復元（set の alias）
+xai banner restore /path/to/banner-backup.jpg
+xai banner restore /path/to/banner-backup.jpg --dry-run
+
 xai banner remove --dry-run
 ```
 

@@ -26,6 +26,7 @@ npm run build      # TypeScriptビルド
 src/
   cli/index.ts           # CLI エントリポイント（commander）
   cli/embed.ts           # embed コマンド実装
+  cli/stdin.ts           # 標準入力読み取りユーティリティ
   lib/client.ts          # XaiClient（xAI API ラッパー）
   lib/twitter-client.ts  # TwitterClient（X API v2 ラッパー）
   lib/twitter-types.ts   # X API 関連型定義
@@ -39,12 +40,12 @@ src/
 ### 主要コマンド一覧
 
 xAI/Grok 系（`XAI_API_KEY` 使用）:
-- `auth test`, `search`, `user`, `tweet` (LLMモード), `tweet --image`, `ask`, `grok`
+- `auth test`, `search`, `user`, `tweet` (LLMモード), `tweet --image`, `ask`
 
 X API v2 読み取り系（Bearer Token 主体）:
 - `profile get`, `dm-check`, `timeline`, `home-timeline`, `mentions`, `thread`
 - `following`, `followers`, `lists`, `list-tweets`, `list-members`
-- `tweets <ids...>`, `counts`, `user-search` (Basic+), `search-all` (Pro+)
+- `tweets <ids...>`, `counts`, `user-search` (Pro), `search-all` (Pro+)
 - `trends`, `spaces` (仕様流動的)
 
 X API v2 書き込み系（OAuth1 / OAuth2 User Token 主体）:
@@ -56,7 +57,8 @@ X API v2 書き込み系（OAuth1 / OAuth2 User Token 主体）:
 ### ティア制約の注意
 
 - `search-all`: 要 Pro+ ティア（Academic Research アクセス）
-- `user-search` / `tweet --metrics`: 要 Basic+ ティアの可能性
+- `user-search`: 要 Pro ティア（公式に Pro plan で提供）
+- `tweet --metrics`: 自分の投稿のみ・要 Basic+ ティア
 - `trends` / `spaces`: エンドポイント仕様が流動的・ティア制約の可能性
 - 書き込み系全般: `--dry-run` で事前確認を推奨
 - いいね / リツイート / フォロー操作: Enterprise 限定（未実装）

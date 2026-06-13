@@ -2355,6 +2355,7 @@ describe("TwitterClient.uploadMedia", () => {
   });
 
   it("polls STATUS when FINALIZE returns processing_info with state=pending", async () => {
+    vi.useFakeTimers();
     const { writeFileSync, unlinkSync } = await import("node:fs");
     const { tmpdir } = await import("node:os");
     const { join } = await import("node:path");
@@ -2370,7 +2371,10 @@ describe("TwitterClient.uploadMedia", () => {
 
     try {
       const tc = makeClient();
-      const result = await tc.uploadMedia(tmp);
+      const uploadPromise = tc.uploadMedia(tmp);
+      // Advance timers to skip sleep delays in STATUS polling
+      await vi.runAllTimersAsync();
+      const result = await uploadPromise;
       expect(result).toBe("media_222");
 
       // Should have called STATUS twice (in_progress → succeeded)
@@ -2383,6 +2387,7 @@ describe("TwitterClient.uploadMedia", () => {
       expect(statusUrl.searchParams.get("media_id")).toBe("media_222");
     } finally {
       unlinkSync(tmp);
+      vi.useRealTimers();
     }
   });
 
