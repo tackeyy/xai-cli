@@ -2337,6 +2337,301 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
       },
     );
 
+  // --- mute (L3) ---
+  program
+    .command("mute <username>")
+    .description("Mute a user by @username (--dry-run required for safety)")
+    .option("--auth <mode>", "Auth mode: oauth2-user | oauth1 (default: oauth2-user)")
+    .requiredOption("--dry-run", "Required: preview the request without executing it")
+    .action(
+      async (username: string, opts: { auth?: string; dryRun?: boolean }) => {
+        try {
+          const tc = getTwitterClient();
+          const mode = getOutputMode();
+          const cleanUsername = stripAt(username);
+          const authMode = (opts.auth === "oauth1" ? "oauth1" : "oauth2-user") as "oauth1" | "oauth2-user";
+
+          const lookup = await tc.getUserByUsername(cleanUsername, { auth: "bearer" });
+          const targetUserId = lookup.data.id;
+
+          // --dry-run is required (enforced by .requiredOption)
+          const summary = {
+            dry_run: true,
+            endpoint: `POST https://api.twitter.com/2/users/<me>/muting`,
+            target: `@${cleanUsername}`,
+            target_id: targetUserId,
+            auth: authMode,
+          };
+          if (mode === "json") {
+            jsonOutput(summary);
+          } else {
+            console.log(`[dry-run] endpoint: ${summary.endpoint}`);
+            console.log(`[dry-run] target: ${summary.target} (id: ${targetUserId})`);
+            console.log(`[dry-run] auth: ${authMode}`);
+          }
+        } catch (err: any) {
+          console.error(`Error: ${err.message}`);
+          process.exit(1);
+        }
+      },
+    );
+
+  // --- unmute (L3) ---
+  program
+    .command("unmute <username>")
+    .description("Unmute a user by @username (--dry-run required for safety)")
+    .option("--auth <mode>", "Auth mode: oauth2-user | oauth1 (default: oauth2-user)")
+    .requiredOption("--dry-run", "Required: preview the request without executing it")
+    .action(
+      async (username: string, opts: { auth?: string; dryRun?: boolean }) => {
+        try {
+          const tc = getTwitterClient();
+          const mode = getOutputMode();
+          const cleanUsername = stripAt(username);
+          const authMode = (opts.auth === "oauth1" ? "oauth1" : "oauth2-user") as "oauth1" | "oauth2-user";
+
+          const lookup = await tc.getUserByUsername(cleanUsername, { auth: "bearer" });
+          const targetUserId = lookup.data.id;
+
+          const summary = {
+            dry_run: true,
+            endpoint: `DELETE https://api.twitter.com/2/users/<me>/muting/${targetUserId}`,
+            target: `@${cleanUsername}`,
+            target_id: targetUserId,
+            auth: authMode,
+          };
+          if (mode === "json") {
+            jsonOutput(summary);
+          } else {
+            console.log(`[dry-run] endpoint: ${summary.endpoint}`);
+            console.log(`[dry-run] target: ${summary.target} (id: ${targetUserId})`);
+            console.log(`[dry-run] auth: ${authMode}`);
+          }
+        } catch (err: any) {
+          console.error(`Error: ${err.message}`);
+          process.exit(1);
+        }
+      },
+    );
+
+  // --- block (L3) ---
+  program
+    .command("block <username>")
+    .description("Block a user by @username (--dry-run required for safety)")
+    .option("--auth <mode>", "Auth mode: oauth2-user | oauth1 (default: oauth2-user)")
+    .requiredOption("--dry-run", "Required: preview the request without executing it")
+    .action(
+      async (username: string, opts: { auth?: string; dryRun?: boolean }) => {
+        try {
+          const tc = getTwitterClient();
+          const mode = getOutputMode();
+          const cleanUsername = stripAt(username);
+          const authMode = (opts.auth === "oauth1" ? "oauth1" : "oauth2-user") as "oauth1" | "oauth2-user";
+
+          const lookup = await tc.getUserByUsername(cleanUsername, { auth: "bearer" });
+          const targetUserId = lookup.data.id;
+
+          const summary = {
+            dry_run: true,
+            endpoint: `POST https://api.twitter.com/2/users/<me>/blocking`,
+            target: `@${cleanUsername}`,
+            target_id: targetUserId,
+            auth: authMode,
+          };
+          if (mode === "json") {
+            jsonOutput(summary);
+          } else {
+            console.log(`[dry-run] endpoint: ${summary.endpoint}`);
+            console.log(`[dry-run] target: ${summary.target} (id: ${targetUserId})`);
+            console.log(`[dry-run] auth: ${authMode}`);
+          }
+        } catch (err: any) {
+          console.error(`Error: ${err.message}`);
+          process.exit(1);
+        }
+      },
+    );
+
+  // --- unblock (L3) ---
+  program
+    .command("unblock <username>")
+    .description("Unblock a user by @username (--dry-run required for safety)")
+    .option("--auth <mode>", "Auth mode: oauth2-user | oauth1 (default: oauth2-user)")
+    .requiredOption("--dry-run", "Required: preview the request without executing it")
+    .action(
+      async (username: string, opts: { auth?: string; dryRun?: boolean }) => {
+        try {
+          const tc = getTwitterClient();
+          const mode = getOutputMode();
+          const cleanUsername = stripAt(username);
+          const authMode = (opts.auth === "oauth1" ? "oauth1" : "oauth2-user") as "oauth1" | "oauth2-user";
+
+          const lookup = await tc.getUserByUsername(cleanUsername, { auth: "bearer" });
+          const targetUserId = lookup.data.id;
+
+          const summary = {
+            dry_run: true,
+            endpoint: `DELETE https://api.twitter.com/2/users/<me>/blocking/${targetUserId}`,
+            target: `@${cleanUsername}`,
+            target_id: targetUserId,
+            auth: authMode,
+          };
+          if (mode === "json") {
+            jsonOutput(summary);
+          } else {
+            console.log(`[dry-run] endpoint: ${summary.endpoint}`);
+            console.log(`[dry-run] target: ${summary.target} (id: ${targetUserId})`);
+            console.log(`[dry-run] auth: ${authMode}`);
+          }
+        } catch (err: any) {
+          console.error(`Error: ${err.message}`);
+          process.exit(1);
+        }
+      },
+    );
+
+  // --- search-all (L4) ---
+  // NOTE: Requires Pro+ tier (Academic Research access). Returns 403 on lower tiers.
+  program
+    .command("search-all <query>")
+    .description(
+      "Full-archive tweet search via GET /2/tweets/search/all. NOTE: Requires Pro+ tier — returns 403 on lower tiers.",
+    )
+    .option("--from <datetime>", "Start time (ISO 8601, e.g. 2020-01-01T00:00:00Z)")
+    .option("--to <datetime>", "End time (ISO 8601, e.g. 2020-12-31T23:59:59Z)")
+    .option("--max-results <n>", "Max results (10-500)", parsePositiveInteger)
+    .option("--tweet-fields <csv>", "Tweet fields (comma-separated)", parseCsv)
+    .option("--auth <mode>", "Auth mode: bearer | oauth1 (default: bearer)")
+    .action(
+      async (
+        query: string,
+        opts: {
+          from?: string;
+          to?: string;
+          maxResults?: number;
+          tweetFields?: string[];
+          auth?: string;
+        },
+      ) => {
+        try {
+          const tc = getTwitterClient();
+          const mode = getOutputMode();
+          const authMode = (opts.auth === "oauth1" ? "oauth1" : "bearer") as "bearer" | "oauth1";
+
+          const result = await tc.searchAll(query, {
+            startTime: opts.from,
+            endTime: opts.to,
+            maxResults: opts.maxResults,
+            tweetFields: opts.tweetFields,
+            auth: authMode,
+          });
+
+          if (mode === "json") {
+            jsonOutput(result);
+          } else {
+            console.log(`Search all: ${result.meta?.result_count ?? result.data?.length ?? 0} tweets`);
+            for (const tweet of result.data ?? []) {
+              const textSnippet = (tweet.text ?? "").slice(0, 100).replace(/\n/g, " ");
+              console.log(`${tweet.id}\t${tweet.created_at ?? ""}\t${textSnippet}`);
+            }
+            if (result.meta?.next_token) {
+              console.log(`\n(next page available)`);
+            }
+          }
+        } catch (err: any) {
+          console.error(`Error: ${err.message}`);
+          process.exit(1);
+        }
+      },
+    );
+
+  // --- trends (L7) ---
+  // NOTE: GET /2/trends/by/woeid/:woeid — endpoint spec is subject to change; tier restrictions may apply.
+  program
+    .command("trends <woeid>")
+    .description(
+      "Get trending topics by WOEID (e.g. 23424856=Japan). NOTE: Endpoint spec subject to change; tier restrictions may apply.",
+    )
+    .option("--auth <mode>", "Auth mode: bearer | oauth1 (default: bearer)")
+    .action(
+      async (
+        woeid: string,
+        opts: { auth?: string },
+      ) => {
+        try {
+          const tc = getTwitterClient();
+          const mode = getOutputMode();
+          const authMode = (opts.auth === "oauth1" ? "oauth1" : "bearer") as "bearer" | "oauth1";
+          const woeidNum = Number.parseInt(woeid, 10);
+          if (!Number.isInteger(woeidNum) || woeidNum <= 0) {
+            console.error("Error: woeid must be a positive integer");
+            process.exit(1);
+            return;
+          }
+
+          const result = await tc.getTrends(woeidNum, { auth: authMode });
+
+          if (mode === "json") {
+            jsonOutput(result);
+          } else {
+            const trends = result.data ?? [];
+            console.log(`Trends (woeid=${woeid}): ${trends.length}`);
+            for (const trend of trends) {
+              const count = trend.tweet_count !== undefined ? `\t${trend.tweet_count}` : "";
+              console.log(`${trend.trend_name}${count}`);
+            }
+          }
+        } catch (err: any) {
+          console.error(`Error: ${err.message}`);
+          process.exit(1);
+        }
+      },
+    );
+
+  // --- spaces (L7) ---
+  // NOTE: GET /2/spaces/search — endpoint spec is subject to change; tier restrictions may apply.
+  program
+    .command("spaces <query>")
+    .description(
+      "Search Twitter Spaces by keyword. NOTE: Endpoint spec subject to change; tier restrictions may apply.",
+    )
+    .option("--max-results <n>", "Max results", parsePositiveInteger)
+    .option("--auth <mode>", "Auth mode: bearer | oauth1 (default: bearer)")
+    .action(
+      async (
+        query: string,
+        opts: { maxResults?: number; auth?: string },
+      ) => {
+        try {
+          const tc = getTwitterClient();
+          const mode = getOutputMode();
+          const authMode = (opts.auth === "oauth1" ? "oauth1" : "bearer") as "bearer" | "oauth1";
+
+          const result = await tc.searchSpaces(query, {
+            maxResults: opts.maxResults,
+            auth: authMode,
+          });
+
+          if (mode === "json") {
+            jsonOutput(result);
+          } else {
+            const spaces = result.data ?? [];
+            console.log(`Spaces: ${spaces.length}`);
+            for (const space of spaces) {
+              const title = space.title ?? "(no title)";
+              console.log(`${space.id}\t${space.state ?? ""}\t${title}`);
+            }
+            if (result.meta?.next_token) {
+              console.log(`\n(next page available)`);
+            }
+          }
+        } catch (err: any) {
+          console.error(`Error: ${err.message}`);
+          process.exit(1);
+        }
+      },
+    );
+
   return program;
 }
 

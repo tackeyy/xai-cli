@@ -246,3 +246,52 @@ export interface TwitterTweetsLookupResponse {
   includes?: TwitterIncludes;
   meta?: TwitterMeta;
 }
+
+// --- Mute / Block (L3) ---
+
+export interface MuteBlockResult {
+  /** true when the muting/blocking relationship was created */
+  muting?: boolean;
+  /** true when the blocking relationship was created */
+  blocking?: boolean;
+}
+
+// --- Search All (L4) ---
+// NOTE: Requires Academic Research / Pro+ tier. Returns 403 on lower tiers.
+
+export interface TwitterSearchAllResponse {
+  data?: TwitterTweet[];
+  includes?: TwitterIncludes;
+  meta: TwitterMeta & { newest_id?: string; oldest_id?: string };
+}
+
+// --- Trends (L7) ---
+// NOTE: Endpoint spec is subject to change; tier restrictions may apply.
+
+export interface TwitterTrend {
+  trend_name: string;
+  tweet_count?: number;
+  [key: string]: unknown;
+}
+
+export interface TwitterTrendsResponse {
+  data?: TwitterTrend[];
+  [key: string]: unknown;
+}
+
+// --- Spaces (L7) ---
+// NOTE: Endpoint spec is subject to change; tier restrictions may apply.
+
+export interface TwitterSpace {
+  id: string;
+  state?: string;
+  title?: string;
+  created_at?: string;
+  host_ids?: string[];
+  [key: string]: unknown;
+}
+
+export interface TwitterSpacesSearchResponse {
+  data?: TwitterSpace[];
+  meta?: TwitterMeta;
+}

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { TwitterClient, TweetTooLongError } from "../twitter-client.js";
 import type { DeleteTweetResult } from "../twitter-types.js";
+import type { MuteBlockResult, TwitterSearchAllResponse, TwitterTrendsResponse, TwitterSpacesSearchResponse } from "../twitter-types.js";
 
 function makeClient() {
   return new TwitterClient({
@@ -3165,5 +3166,312 @@ describe("TwitterClient.postThread", () => {
     await expect(tc.postThread(["first", "second"])).rejects.toThrow(/403/);
     // Only 2 calls should have been made
     expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ============================================================
+// L3: muteUser / unmuteUser / blockUser / unblockUser
+// ============================================================
+
+describe("TwitterClient.muteUser", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    fetchSpy = vi.spyOn(global, "fetch");
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("sends POST /2/users/:id/muting with correct body and returns muting=true", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ data: { muting: true } }), { status: 200 }),
+    );
+
+    const tc = makeFullClient();
+    const result = await tc.muteUser("target123", { userId: "me456" });
+
+    expect(result.muting).toBe(true);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+    const call = fetchSpy.mock.calls[0];
+    expect(call[0]).toContain("/2/users/me456/muting");
+    expect(call[1]?.method).toBe("POST");
+    const body = JSON.parse(String(call[1]?.body));
+    expect(body.target_user_id).toBe("target123");
+  });
+
+  it("accepts oauth2-user auth", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ data: { muting: true } }), { status: 200 }),
+    );
+
+    const tc = makeFullClient();
+    await tc.muteUser("t999", { userId: "me1", auth: "oauth2-user" });
+
+    const call = fetchSpy.mock.calls[0];
+    const authHeader = String((call[1]?.headers as Record<string, string>)?.Authorization ?? "");
+    expect(authHeader).toMatch(/^Bearer /);
+  });
+
+  it("throws when neither oauth2-user nor oauth1 credentials are set", async () => {
+    const tc = makeBearerClient(); // no oauth1, no oauth2UserToken
+    await expect(tc.muteUser("t1", { userId: "me" })).rejects.toThrow();
+  });
+
+  it("throws on API error", async () => {
+    fetchSpy.mockResolvedValue(new Response("Forbidden", { status: 403 }));
+    const tc = makeFullClient();
+    await expect(tc.muteUser("t1", { userId: "me" })).rejects.toThrow(/403/);
+  });
+});
+
+describe("TwitterClient.unmuteUser", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    fetchSpy = vi.spyOn(global, "fetch");
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("sends DELETE /2/users/:source_id/muting/:target_id and returns muting=false", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ data: { muting: false } }), { status: 200 }),
+    );
+
+    const tc = makeFullClient();
+    const result = await tc.unmuteUser("target123", { userId: "me456" });
+
+    expect(result.muting).toBe(false);
+
+    const call = fetchSpy.mock.calls[0];
+    expect(call[0]).toContain("/2/users/me456/muting/target123");
+    expect(call[1]?.method).toBe("DELETE");
+  });
+
+  it("throws on API error", async () => {
+    fetchSpy.mockResolvedValue(new Response("Not Found", { status: 404 }));
+    const tc = makeFullClient();
+    await expect(tc.unmuteUser("t1", { userId: "me" })).rejects.toThrow(/404/);
+  });
+});
+
+describe("TwitterClient.blockUser", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    fetchSpy = vi.spyOn(global, "fetch");
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("sends POST /2/users/:id/blocking with correct body and returns blocking=true", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ data: { blocking: true } }), { status: 200 }),
+    );
+
+    const tc = makeFullClient();
+    const result = await tc.blockUser("target123", { userId: "me456" });
+
+    expect(result.blocking).toBe(true);
+
+    const call = fetchSpy.mock.calls[0];
+    expect(call[0]).toContain("/2/users/me456/blocking");
+    expect(call[1]?.method).toBe("POST");
+    const body = JSON.parse(String(call[1]?.body));
+    expect(body.target_user_id).toBe("target123");
+  });
+
+  it("throws when no auth credentials are set", async () => {
+    const tc = makeBearerClient();
+    await expect(tc.blockUser("t1", { userId: "me" })).rejects.toThrow();
+  });
+});
+
+describe("TwitterClient.unblockUser", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    fetchSpy = vi.spyOn(global, "fetch");
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("sends DELETE /2/users/:source_id/blocking/:target_id and returns blocking=false", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ data: { blocking: false } }), { status: 200 }),
+    );
+
+    const tc = makeFullClient();
+    const result = await tc.unblockUser("target123", { userId: "me456" });
+
+    expect(result.blocking).toBe(false);
+
+    const call = fetchSpy.mock.calls[0];
+    expect(call[0]).toContain("/2/users/me456/blocking/target123");
+    expect(call[1]?.method).toBe("DELETE");
+  });
+
+  it("throws on API error", async () => {
+    fetchSpy.mockResolvedValue(new Response("Unauthorized", { status: 401 }));
+    const tc = makeFullClient();
+    await expect(tc.unblockUser("t1", { userId: "me" })).rejects.toThrow(/401/);
+  });
+});
+
+// ============================================================
+// L4: searchAll (GET /2/tweets/search/all — requires Pro+ tier)
+// ============================================================
+
+describe("TwitterClient.searchAll", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    fetchSpy = vi.spyOn(global, "fetch");
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("calls GET /2/tweets/search/all with query param", async () => {
+    const apiResp: TwitterSearchAllResponse = {
+      data: [{ id: "100", text: "hello" }],
+      meta: { result_count: 1 },
+    };
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify(apiResp), { status: 200 }),
+    );
+
+    const tc = makeBearerClient();
+    const result = await tc.searchAll("hello world");
+
+    expect(result.data).toHaveLength(1);
+    expect(result.data![0].id).toBe("100");
+
+    const call = fetchSpy.mock.calls[0];
+    const url = String(call[0]);
+    expect(url).toContain("/2/tweets/search/all");
+    expect(url).toContain("query=");
+  });
+
+  it("forwards start_time / end_time / max_results when provided", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ data: [], meta: { result_count: 0 } }), { status: 200 }),
+    );
+
+    const tc = makeBearerClient();
+    await tc.searchAll("test", {
+      startTime: "2024-01-01T00:00:00Z",
+      endTime: "2024-01-31T23:59:59Z",
+      maxResults: 50,
+    });
+
+    const url = String(fetchSpy.mock.calls[0][0]);
+    expect(url).toContain("start_time=");
+    expect(url).toContain("end_time=");
+    expect(url).toContain("max_results=50");
+  });
+
+  it("throws when query is empty", async () => {
+    const tc = makeBearerClient();
+    await expect(tc.searchAll("")).rejects.toThrow(/query/i);
+  });
+
+  it("throws on API 403 (insufficient tier)", async () => {
+    fetchSpy.mockResolvedValue(new Response("Forbidden", { status: 403 }));
+    const tc = makeBearerClient();
+    await expect(tc.searchAll("test")).rejects.toThrow(/403/);
+  });
+});
+
+// ============================================================
+// L7: getTrends / searchSpaces
+// ============================================================
+
+describe("TwitterClient.getTrends", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    fetchSpy = vi.spyOn(global, "fetch");
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("calls GET /2/trends/by/woeid/:woeid", async () => {
+    const apiResp: TwitterTrendsResponse = {
+      data: [{ trend_name: "#trending", tweet_count: 1000 }],
+    };
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify(apiResp), { status: 200 }),
+    );
+
+    const tc = makeBearerClient();
+    const result = await tc.getTrends(23424856);
+
+    expect(result.data).toHaveLength(1);
+    expect(result.data![0].trend_name).toBe("#trending");
+
+    const url = String(fetchSpy.mock.calls[0][0]);
+    expect(url).toContain("/2/trends/by/woeid/23424856");
+  });
+
+  it("throws on API error", async () => {
+    fetchSpy.mockResolvedValue(new Response("Not Found", { status: 404 }));
+    const tc = makeBearerClient();
+    await expect(tc.getTrends(99999)).rejects.toThrow(/404/);
+  });
+});
+
+describe("TwitterClient.searchSpaces", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    fetchSpy = vi.spyOn(global, "fetch");
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("calls GET /2/spaces/search with query param", async () => {
+    const apiResp: TwitterSpacesSearchResponse = {
+      data: [{ id: "1sp", state: "live", title: "Test Space" }],
+      meta: { result_count: 1 },
+    };
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify(apiResp), { status: 200 }),
+    );
+
+    const tc = makeBearerClient();
+    const result = await tc.searchSpaces("test topic");
+
+    expect(result.data).toHaveLength(1);
+    expect(result.data![0].id).toBe("1sp");
+
+    const url = String(fetchSpy.mock.calls[0][0]);
+    expect(url).toContain("/2/spaces/search");
+    expect(url).toContain("query=");
+  });
+
+  it("throws when query is empty", async () => {
+    const tc = makeBearerClient();
+    await expect(tc.searchSpaces("")).rejects.toThrow(/query/i);
+  });
+
+  it("throws on API error", async () => {
+    fetchSpy.mockResolvedValue(new Response("Unauthorized", { status: 401 }));
+    const tc = makeBearerClient();
+    await expect(tc.searchSpaces("topic")).rejects.toThrow(/401/);
   });
 });

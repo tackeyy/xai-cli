@@ -231,6 +231,25 @@ function createMockTwitterClient(): TwitterClient {
       { id: "th2", text: "second", url: "https://x.com/i/status/th2", posted_at: "2026-01-01T00:00:01Z" },
     ]),
     buildPostPayload: vi.fn().mockReturnValue({ text: "hello" }),
+    muteUser: vi.fn().mockResolvedValue({ muting: true }),
+    unmuteUser: vi.fn().mockResolvedValue({ muting: false }),
+    blockUser: vi.fn().mockResolvedValue({ blocking: true }),
+    unblockUser: vi.fn().mockResolvedValue({ blocking: false }),
+    searchAll: vi.fn().mockResolvedValue({
+      data: [{ id: "all1", text: "full archive tweet", created_at: "2020-06-01T00:00:00Z" }],
+      meta: { result_count: 1 },
+    }),
+    getTrends: vi.fn().mockResolvedValue({
+      data: [{ trend_name: "#trending", tweet_count: 1000 }],
+    }),
+    searchSpaces: vi.fn().mockResolvedValue({
+      data: [{ id: "sp1", state: "live", title: "Test Space" }],
+      meta: { result_count: 1 },
+    }),
+    getHomeTimeline: vi.fn().mockResolvedValue({
+      data: [{ id: "ht1", text: "home tweet", like_count: null, retweet_count: null, reply_count: null, quote_count: null, bookmark_count: null, view_count: null }],
+      meta: { result_count: 1 },
+    }),
   };
   return mock as TwitterClient;
 }
@@ -2200,6 +2219,190 @@ describe("CLI commands", () => {
       );
       await run(["post-thread", "tweet1", "tweet2"], undefined, tc);
       expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("403"));
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    });
+  });
+
+  // ============================================================
+  // mute / unmute / block / unblock (L3)
+  // ============================================================
+
+  describe("mute", () => {
+    it("dry-run resolves username and prints endpoint info", async () => {
+      const tc = createMockTwitterClient();
+      await run(["mute", "--dry-run", "someuser"], undefined, tc);
+      expect(tc.getUserByUsername).toHaveBeenCalledWith("someuser", { auth: "bearer" });
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("[dry-run]"));
+    });
+
+    it("dry-run outputs JSON with dry_run=true", async () => {
+      const tc = createMockTwitterClient();
+      await run(["--json", "mute", "--dry-run", "someuser"], undefined, tc);
+      const parsed = JSON.parse(logSpy.mock.calls[0][0]);
+      expect(parsed.dry_run).toBe(true);
+      expect(parsed.target_id).toBe("12345");
+    });
+
+    it("strips @ from username before lookup", async () => {
+      const tc = createMockTwitterClient();
+      await run(["mute", "--dry-run", "@someuser"], undefined, tc);
+      expect(tc.getUserByUsername).toHaveBeenCalledWith("someuser", expect.any(Object));
+    });
+
+    it("exits 1 on lookup error", async () => {
+      const tc = createMockTwitterClient();
+      (tc.getUserByUsername as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("Not found"));
+      await run(["mute", "--dry-run", "missing"], undefined, tc);
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    });
+  });
+
+  describe("unmute", () => {
+    it("dry-run shows DELETE endpoint", async () => {
+      const tc = createMockTwitterClient();
+      await run(["unmute", "--dry-run", "someuser"], undefined, tc);
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("[dry-run]"));
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("DELETE"));
+    });
+
+    it("dry-run JSON includes target_id", async () => {
+      const tc = createMockTwitterClient();
+      await run(["--json", "unmute", "--dry-run", "someuser"], undefined, tc);
+      const parsed = JSON.parse(logSpy.mock.calls[0][0]);
+      expect(parsed.dry_run).toBe(true);
+      expect(parsed.target_id).toBe("12345");
+    });
+  });
+
+  describe("block", () => {
+    it("dry-run shows POST /blocking endpoint", async () => {
+      const tc = createMockTwitterClient();
+      await run(["block", "--dry-run", "someuser"], undefined, tc);
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("[dry-run]"));
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("blocking"));
+    });
+
+    it("dry-run JSON includes dry_run=true and target", async () => {
+      const tc = createMockTwitterClient();
+      await run(["--json", "block", "--dry-run", "someuser"], undefined, tc);
+      const parsed = JSON.parse(logSpy.mock.calls[0][0]);
+      expect(parsed.dry_run).toBe(true);
+      expect(parsed.target).toContain("someuser");
+    });
+  });
+
+  describe("unblock", () => {
+    it("dry-run shows DELETE /blocking endpoint", async () => {
+      const tc = createMockTwitterClient();
+      await run(["unblock", "--dry-run", "someuser"], undefined, tc);
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("[dry-run]"));
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("DELETE"));
+    });
+  });
+
+  // ============================================================
+  // search-all (L4)
+  // ============================================================
+
+  describe("search-all", () => {
+    it("calls searchAll and prints result in human mode", async () => {
+      const tc = createMockTwitterClient();
+      await run(["search-all", "AI news"], undefined, tc);
+      expect(tc.searchAll).toHaveBeenCalledWith(
+        "AI news",
+        expect.objectContaining({ auth: "bearer" }),
+      );
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Search all:"));
+    });
+
+    it("outputs JSON when --json is set", async () => {
+      const tc = createMockTwitterClient();
+      await run(["--json", "search-all", "AI"], undefined, tc);
+      const parsed = JSON.parse(logSpy.mock.calls[0][0]);
+      expect(Array.isArray(parsed.data)).toBe(true);
+      expect(parsed.data[0].id).toBe("all1");
+    });
+
+    it("forwards --from and --to as startTime/endTime", async () => {
+      const tc = createMockTwitterClient();
+      await run(["search-all", "AI", "--from", "2020-01-01T00:00:00Z", "--to", "2020-12-31T23:59:59Z"], undefined, tc);
+      expect(tc.searchAll).toHaveBeenCalledWith(
+        "AI",
+        expect.objectContaining({
+          startTime: "2020-01-01T00:00:00Z",
+          endTime: "2020-12-31T23:59:59Z",
+        }),
+      );
+    });
+
+    it("exits 1 on API error", async () => {
+      const tc = createMockTwitterClient();
+      (tc.searchAll as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("403 Forbidden"));
+      await run(["search-all", "test"], undefined, tc);
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    });
+  });
+
+  // ============================================================
+  // trends (L7)
+  // ============================================================
+
+  describe("trends", () => {
+    it("calls getTrends with woeid and prints result", async () => {
+      const tc = createMockTwitterClient();
+      await run(["trends", "23424856"], undefined, tc);
+      expect(tc.getTrends).toHaveBeenCalledWith(23424856, expect.objectContaining({ auth: "bearer" }));
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Trends"));
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("#trending"));
+    });
+
+    it("outputs JSON when --json is set", async () => {
+      const tc = createMockTwitterClient();
+      await run(["--json", "trends", "1"], undefined, tc);
+      const parsed = JSON.parse(logSpy.mock.calls[0][0]);
+      expect(parsed.data[0].trend_name).toBe("#trending");
+    });
+
+    it("exits 1 when woeid is not a valid integer", async () => {
+      const tc = createMockTwitterClient();
+      await run(["trends", "notanumber"], undefined, tc);
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    });
+
+    it("exits 1 on API error", async () => {
+      const tc = createMockTwitterClient();
+      (tc.getTrends as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("404"));
+      await run(["trends", "23424856"], undefined, tc);
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    });
+  });
+
+  // ============================================================
+  // spaces (L7)
+  // ============================================================
+
+  describe("spaces", () => {
+    it("calls searchSpaces and prints result in human mode", async () => {
+      const tc = createMockTwitterClient();
+      await run(["spaces", "tech"], undefined, tc);
+      expect(tc.searchSpaces).toHaveBeenCalledWith(
+        "tech",
+        expect.objectContaining({ auth: "bearer" }),
+      );
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Spaces:"));
+    });
+
+    it("outputs JSON when --json is set", async () => {
+      const tc = createMockTwitterClient();
+      await run(["--json", "spaces", "tech"], undefined, tc);
+      const parsed = JSON.parse(logSpy.mock.calls[0][0]);
+      expect(parsed.data[0].id).toBe("sp1");
+    });
+
+    it("exits 1 on API error", async () => {
+      const tc = createMockTwitterClient();
+      (tc.searchSpaces as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("401"));
+      await run(["spaces", "topic"], undefined, tc);
       expect(exitSpy).toHaveBeenCalledWith(1);
     });
   });
