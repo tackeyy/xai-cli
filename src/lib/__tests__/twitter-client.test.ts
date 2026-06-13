@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { TwitterClient, TweetTooLongError } from "../twitter-client.js";
+import type { DeleteTweetResult } from "../twitter-types.js";
 
 function makeClient() {
   return new TwitterClient({
@@ -1940,6 +1941,328 @@ describe("TwitterClient.removeProfileBanner", () => {
   it("requires OAuth1 credentials", async () => {
     const tc = makeBearerClient();
     await expect(tc.removeProfileBanner()).rejects.toThrow();
+  });
+});
+
+// --- getFollowers tests ---
+
+describe("TwitterClient.getFollowers", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    fetchSpy = vi.spyOn(global, "fetch");
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("calls correct endpoint with user id", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({
+        data: [{ id: "1", username: "follower1" }],
+        meta: { result_count: 1 },
+      }), { status: 200 }),
+    );
+
+    const tc = makeBearerClient();
+    const result = await tc.getFollowers("12345");
+
+    expect(result.data).toHaveLength(1);
+    const url = fetchSpy.mock.calls[0][0] as string;
+    expect(url).toContain("/2/users/12345/followers");
+  });
+
+  it("sends pagination_token as query param", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({
+        data: [{ id: "2", username: "follower2" }],
+        meta: { result_count: 1 },
+      }), { status: 200 }),
+    );
+
+    const tc = makeBearerClient();
+    await tc.getFollowers("12345", { paginationToken: "tok123" });
+
+    const url = fetchSpy.mock.calls[0][0] as string;
+    expect(url).toContain("pagination_token=tok123");
+  });
+
+  it("sends max_results as query param", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({
+        data: [{ id: "3", username: "follower3" }],
+        meta: { result_count: 1 },
+      }), { status: 200 }),
+    );
+
+    const tc = makeBearerClient();
+    await tc.getFollowers("12345", { maxResults: 200 });
+
+    const url = fetchSpy.mock.calls[0][0] as string;
+    expect(url).toContain("max_results=200");
+  });
+});
+
+// --- getAllFollowers tests ---
+
+describe("TwitterClient.getAllFollowers", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    fetchSpy = vi.spyOn(global, "fetch");
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("follows next_token across multiple pages", async () => {
+    fetchSpy
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({
+          data: [{ id: "1", username: "a" }],
+          meta: { result_count: 1, next_token: "page2" },
+        }), { status: 200 }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({
+          data: [{ id: "2", username: "b" }],
+          meta: { result_count: 1 },
+        }), { status: 200 }),
+      );
+
+    const tc = makeBearerClient();
+    const result = await tc.getAllFollowers("12345");
+
+    expect(result.data).toHaveLength(2);
+    expect(result.meta.result_count).toBe(2);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("respects limitPages", async () => {
+    const makeRes = (nextToken?: string) =>
+      new Response(JSON.stringify({
+        data: [{ id: "x", username: "x" }],
+        meta: { result_count: 1, ...(nextToken ? { next_token: nextToken } : {}) },
+      }), { status: 200 });
+
+    fetchSpy
+      .mockResolvedValueOnce(makeRes("p2"))
+      .mockResolvedValueOnce(makeRes("p3"))
+      .mockResolvedValueOnce(makeRes());
+
+    const tc = makeBearerClient();
+    const result = await tc.getAllFollowers("12345", { limitPages: 2 });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(result.data).toHaveLength(2);
+  });
+});
+
+// --- getOwnedLists tests ---
+
+describe("TwitterClient.getOwnedLists", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    fetchSpy = vi.spyOn(global, "fetch");
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("calls correct endpoint with user id", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({
+        data: [{ id: "list1", name: "My List" }],
+        meta: { result_count: 1 },
+      }), { status: 200 }),
+    );
+
+    const tc = makeBearerClient();
+    const result = await tc.getOwnedLists("12345");
+
+    expect(result.data).toHaveLength(1);
+    const url = fetchSpy.mock.calls[0][0] as string;
+    expect(url).toContain("/2/users/12345/owned_lists");
+  });
+
+  it("sends list.fields as query param", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({
+        data: [{ id: "list1", name: "My List", description: "desc" }],
+        meta: { result_count: 1 },
+      }), { status: 200 }),
+    );
+
+    const tc = makeBearerClient();
+    await tc.getOwnedLists("12345", { listFields: ["id", "name", "description"] });
+
+    const url = fetchSpy.mock.calls[0][0] as string;
+    expect(url).toContain("list.fields=");
+    expect(url).toContain("description");
+  });
+
+  it("uses bearer auth by default", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({
+        data: [],
+        meta: { result_count: 0 },
+      }), { status: 200 }),
+    );
+
+    const tc = makeBearerClient();
+    await tc.getOwnedLists("12345");
+
+    const headers = fetchSpy.mock.calls[0][1]?.headers as Record<string, string>;
+    expect(headers["Authorization"]).toMatch(/^Bearer /);
+  });
+});
+
+// --- getListTweets tests ---
+
+describe("TwitterClient.getListTweets", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    fetchSpy = vi.spyOn(global, "fetch");
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("calls correct endpoint with list id", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({
+        data: [{ id: "t1", text: "hello" }],
+        meta: { result_count: 1 },
+      }), { status: 200 }),
+    );
+
+    const tc = makeBearerClient();
+    const result = await tc.getListTweets("list99");
+
+    expect(result.data).toHaveLength(1);
+    const url = fetchSpy.mock.calls[0][0] as string;
+    expect(url).toContain("/2/lists/list99/tweets");
+  });
+
+  it("sends tweet.fields and max_results", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({
+        data: [],
+        meta: { result_count: 0 },
+      }), { status: 200 }),
+    );
+
+    const tc = makeBearerClient();
+    await tc.getListTweets("list99", { tweetFields: ["id", "text", "created_at"], maxResults: 50 });
+
+    const url = fetchSpy.mock.calls[0][0] as string;
+    expect(url).toContain("tweet.fields=");
+    expect(url).toContain("max_results=50");
+  });
+});
+
+// --- getListMembers tests ---
+
+describe("TwitterClient.getListMembers", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    fetchSpy = vi.spyOn(global, "fetch");
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("calls correct endpoint with list id", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({
+        data: [{ id: "u1", username: "user1" }],
+        meta: { result_count: 1 },
+      }), { status: 200 }),
+    );
+
+    const tc = makeBearerClient();
+    const result = await tc.getListMembers("list99");
+
+    expect(result.data).toHaveLength(1);
+    const url = fetchSpy.mock.calls[0][0] as string;
+    expect(url).toContain("/2/lists/list99/members");
+  });
+
+  it("sends user.fields as query param", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({
+        data: [],
+        meta: { result_count: 0 },
+      }), { status: 200 }),
+    );
+
+    const tc = makeBearerClient();
+    await tc.getListMembers("list99", { userFields: ["username", "name", "public_metrics"] });
+
+    const url = fetchSpy.mock.calls[0][0] as string;
+    expect(url).toContain("user.fields=");
+  });
+});
+
+// --- deleteTweet tests ---
+
+describe("TwitterClient.deleteTweet", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    fetchSpy = vi.spyOn(global, "fetch");
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("calls DELETE /2/tweets/:id and returns deleted=true", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ data: { deleted: true } }), { status: 200 }),
+    );
+
+    const tc = makeClient();
+    const result = await tc.deleteTweet("99999");
+
+    expect(result.deleted).toBe(true);
+    const call = fetchSpy.mock.calls[0];
+    expect(String(call[0])).toContain("/2/tweets/99999");
+    expect(call[1]?.method).toBe("DELETE");
+  });
+
+  it("uses OAuth Authorization header", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ data: { deleted: true } }), { status: 200 }),
+    );
+
+    const tc = makeClient();
+    await tc.deleteTweet("12345");
+
+    const headers = fetchSpy.mock.calls[0][1]?.headers as Record<string, string>;
+    expect(headers["Authorization"] ?? headers["authorization"]).toMatch(/^OAuth /);
+  });
+
+  it("throws on API error (e.g. 403)", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ errors: [{ message: "Forbidden" }] }), { status: 403 }),
+    );
+
+    const tc = makeClient();
+    await expect(tc.deleteTweet("12345")).rejects.toThrow("X API error 403");
+  });
+
+  it("requires OAuth1 credentials", async () => {
+    const tc = makeBearerClient();
+    await expect(tc.deleteTweet("12345")).rejects.toThrow(/OAuth 1.0a credentials/);
   });
 });
 

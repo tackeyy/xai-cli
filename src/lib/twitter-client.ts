@@ -18,6 +18,10 @@ import type {
   TwitterUserProfile,
   TwitterUserTimelineResponse,
   TwitterDmEventsResponse,
+  TwitterListsResponse,
+  TwitterListTweetsResponse,
+  TwitterListMembersResponse,
+  DeleteTweetResult,
 } from "./twitter-types.js";
 
 export interface TwitterClientOptions {
@@ -567,6 +571,174 @@ export class TwitterClient {
     };
   }
 
+
+  // --- Followers ---
+
+  async getFollowers(
+    userId: string,
+    opts?: {
+      userFields?: string[];
+      expansions?: string[];
+      tweetFields?: string[];
+      maxResults?: number;
+      paginationToken?: string;
+      auth?: "bearer" | "oauth1";
+    },
+  ): Promise<TwitterFollowingResponse> {
+    const query: Record<string, string | number | undefined> = {};
+    if (opts?.userFields?.length) query["user.fields"] = opts.userFields.join(",");
+    if (opts?.expansions?.length) query.expansions = opts.expansions.join(",");
+    if (opts?.tweetFields?.length) query["tweet.fields"] = opts.tweetFields.join(",");
+    if (opts?.maxResults) query.max_results = opts.maxResults;
+    if (opts?.paginationToken) query.pagination_token = opts.paginationToken;
+
+    return this.get<TwitterFollowingResponse>(
+      `/2/users/${encodeURIComponent(userId)}/followers`,
+      { auth: opts?.auth ?? "bearer", query },
+    );
+  }
+
+  async getAllFollowers(
+    userId: string,
+    opts?: {
+      userFields?: string[];
+      expansions?: string[];
+      tweetFields?: string[];
+      maxResults?: number;
+      limitPages?: number;
+      auth?: "bearer" | "oauth1";
+    },
+  ): Promise<TwitterFollowingResponse> {
+    const maxPages = opts?.limitPages ?? 100;
+    const allData: TwitterUser[] = [];
+    let includes: TwitterIncludes = {};
+    let paginationToken: string | undefined;
+    let pages = 0;
+
+    do {
+      const res = await this.getFollowers(userId, {
+        ...opts,
+        paginationToken,
+      });
+
+      if (res.data) allData.push(...res.data);
+      includes = this.mergeIncludes(includes, res.includes);
+      paginationToken = res.meta?.next_token;
+      pages++;
+    } while (paginationToken && pages < maxPages);
+
+    return {
+      data: allData,
+      includes: Object.keys(includes).length > 0 ? includes : undefined,
+      meta: { result_count: allData.length },
+    };
+  }
+
+  // --- Lists ---
+
+  async getOwnedLists(
+    userId: string,
+    opts?: {
+      listFields?: string[];
+      expansions?: string[];
+      userFields?: string[];
+      maxResults?: number;
+      paginationToken?: string;
+      auth?: TwitterAuthMode;
+    },
+  ): Promise<TwitterListsResponse> {
+    const query: Record<string, string | number | undefined> = {};
+    if (opts?.listFields?.length) query["list.fields"] = opts.listFields.join(",");
+    if (opts?.expansions?.length) query.expansions = opts.expansions.join(",");
+    if (opts?.userFields?.length) query["user.fields"] = opts.userFields.join(",");
+    if (opts?.maxResults) query.max_results = opts.maxResults;
+    if (opts?.paginationToken) query.pagination_token = opts.paginationToken;
+
+    return this.get<TwitterListsResponse>(
+      `/2/users/${encodeURIComponent(userId)}/owned_lists`,
+      { auth: opts?.auth ?? "bearer", query },
+    );
+  }
+
+  async getListTweets(
+    listId: string,
+    opts?: {
+      tweetFields?: string[];
+      expansions?: string[];
+      userFields?: string[];
+      maxResults?: number;
+      paginationToken?: string;
+      auth?: TwitterAuthMode;
+    },
+  ): Promise<TwitterListTweetsResponse> {
+    const query: Record<string, string | number | undefined> = {};
+    if (opts?.tweetFields?.length) query["tweet.fields"] = opts.tweetFields.join(",");
+    if (opts?.expansions?.length) query.expansions = opts.expansions.join(",");
+    if (opts?.userFields?.length) query["user.fields"] = opts.userFields.join(",");
+    if (opts?.maxResults) query.max_results = opts.maxResults;
+    if (opts?.paginationToken) query.pagination_token = opts.paginationToken;
+
+    return this.get<TwitterListTweetsResponse>(
+      `/2/lists/${encodeURIComponent(listId)}/tweets`,
+      { auth: opts?.auth ?? "bearer", query },
+    );
+  }
+
+  async getListMembers(
+    listId: string,
+    opts?: {
+      userFields?: string[];
+      expansions?: string[];
+      tweetFields?: string[];
+      maxResults?: number;
+      paginationToken?: string;
+      auth?: TwitterAuthMode;
+    },
+  ): Promise<TwitterListMembersResponse> {
+    const query: Record<string, string | number | undefined> = {};
+    if (opts?.userFields?.length) query["user.fields"] = opts.userFields.join(",");
+    if (opts?.expansions?.length) query.expansions = opts.expansions.join(",");
+    if (opts?.tweetFields?.length) query["tweet.fields"] = opts.tweetFields.join(",");
+    if (opts?.maxResults) query.max_results = opts.maxResults;
+    if (opts?.paginationToken) query.pagination_token = opts.paginationToken;
+
+    return this.get<TwitterListMembersResponse>(
+      `/2/lists/${encodeURIComponent(listId)}/members`,
+      { auth: opts?.auth ?? "bearer", query },
+    );
+  }
+
+  // --- Delete tweet ---
+
+  async deleteTweet(tweetId: string): Promise<DeleteTweetResult> {
+    this.requireOAuth1Credentials();
+    const url = `${this.baseUrl}/2/tweets/${encodeURIComponent(tweetId)}`;
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+
+    try {
+      const res = await fetch(url, {
+        method: "DELETE",
+        headers: {
+          Authorization: this.buildOAuthHeader("DELETE", url),
+        },
+        signal: controller.signal,
+      });
+
+      if (!res.ok) {
+        const errorBody = await res.text();
+        const retryAfterHeader = res.headers.get("retry-after");
+        const retryHint = retryAfterHeader ? ` (retry-after: ${retryAfterHeader}s)` : "";
+        throw new Error(`X API error ${res.status}${retryHint}: ${errorBody}`);
+      }
+
+      const data = (await res.json()) as { data: { deleted: boolean } };
+      return { deleted: data.data.deleted };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
 
   // --- Mentions ---
 

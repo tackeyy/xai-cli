@@ -176,3 +176,40 @@ export interface TwitterDmEventsResponse {
   data?: TwitterDmEvent[];
   meta?: TwitterMeta;
 }
+
+// --- Lists ---
+
+export interface TwitterList {
+  id: string;
+  name: string;
+  description?: string;
+  owner_id?: string;
+  private?: boolean;
+  follower_count?: number;
+  member_count?: number;
+  created_at?: string;
+  [key: string]: unknown;
+}
+
+export interface TwitterListsResponse {
+  data: TwitterList[];
+  meta: TwitterMeta;
+}
+
+export interface TwitterListTweetsResponse {
+  data: TwitterTweet[];
+  includes?: TwitterIncludes;
+  meta: TwitterMeta;
+}
+
+export interface TwitterListMembersResponse {
+  data: TwitterUser[];
+  includes?: TwitterIncludes;
+  meta: TwitterMeta;
+}
+
+// --- Delete tweet ---
+
+export interface DeleteTweetResult {
+  deleted: boolean;
+}

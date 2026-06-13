@@ -1026,6 +1026,318 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
       },
     );
 
+  // --- followers ---
+  program
+    .command("followers <user>")
+    .description("Get followers list of a user")
+    .option("--user-fields <csv>", "User fields (comma-separated)", parseCsv)
+    .option("--expansions <csv>", "Expansions (comma-separated)", parseCsv)
+    .option("--tweet-fields <csv>", "Tweet fields for expansions (comma-separated)", parseCsv)
+    .option("--max-results <n>", "Max results per page (1-1000)", parsePositiveInteger)
+    .option("--pagination-token <token>", "Pagination token for single page")
+    .option("--all", "Fetch all pages")
+    .option("--limit-pages <n>", "Max pages when using --all", parsePositiveInteger)
+    .option("--auth <mode>", "Auth mode: bearer | oauth1", "bearer")
+    .action(
+      async (
+        user: string,
+        opts: {
+          userFields?: string[];
+          expansions?: string[];
+          tweetFields?: string[];
+          maxResults?: number;
+          paginationToken?: string;
+          all?: boolean;
+          limitPages?: number;
+          auth?: string;
+        },
+      ) => {
+        try {
+          if (opts.all && opts.paginationToken) {
+            console.error("Error: --all and --pagination-token cannot be used together");
+            process.exit(1);
+            return;
+          }
+
+          const tc = getTwitterClient();
+          const mode = getOutputMode();
+          const authMode = (opts.auth === "oauth1" ? "oauth1" : "bearer") as "bearer" | "oauth1";
+
+          let userId: string;
+          let resolvedUser: { id: string; username: string; name?: string } | undefined;
+
+          if (isNumericId(user)) {
+            userId = user;
+          } else {
+            const username = stripAt(user);
+            const lookup = await tc.getUserByUsername(username, { auth: authMode });
+            userId = lookup.data.id;
+            resolvedUser = { id: lookup.data.id, username: lookup.data.username ?? username, name: lookup.data.name };
+          }
+
+          if (opts.all) {
+            const result = await tc.getAllFollowers(userId, {
+              userFields: opts.userFields,
+              expansions: opts.expansions,
+              tweetFields: opts.tweetFields,
+              maxResults: opts.maxResults,
+              limitPages: opts.limitPages,
+              auth: authMode,
+            });
+
+            if (mode === "json") {
+              jsonOutput({ resolved_user: resolvedUser, ...result });
+            } else {
+              formatFollowersOutput(result.data, result.meta?.result_count ?? 0);
+            }
+          } else {
+            const result = await tc.getFollowers(userId, {
+              userFields: opts.userFields,
+              expansions: opts.expansions,
+              tweetFields: opts.tweetFields,
+              maxResults: opts.maxResults,
+              paginationToken: opts.paginationToken,
+              auth: authMode,
+            });
+
+            if (mode === "json") {
+              jsonOutput({ resolved_user: resolvedUser, ...result });
+            } else {
+              formatFollowersOutput(result.data, result.meta?.result_count ?? 0);
+              if (result.meta?.next_token) {
+                console.log(`\n(next page: --pagination-token ${result.meta.next_token})`);
+              }
+            }
+          }
+        } catch (err: any) {
+          console.error(`Error: ${err.message}`);
+          process.exit(1);
+        }
+      },
+    );
+
+  // --- lists ---
+  program
+    .command("lists <user>")
+    .description("Get owned lists of a user")
+    .option("--list-fields <csv>", "List fields (comma-separated)", parseCsv)
+    .option("--expansions <csv>", "Expansions (comma-separated)", parseCsv)
+    .option("--user-fields <csv>", "User fields for expansions (comma-separated)", parseCsv)
+    .option("--max-results <n>", "Max results per page", parsePositiveInteger)
+    .option("--pagination-token <token>", "Pagination token")
+    .option("--auth <mode>", "Auth mode: bearer | oauth1 | oauth2-user", "bearer")
+    .action(
+      async (
+        user: string,
+        opts: {
+          listFields?: string[];
+          expansions?: string[];
+          userFields?: string[];
+          maxResults?: number;
+          paginationToken?: string;
+          auth?: string;
+        },
+      ) => {
+        try {
+          const tc = getTwitterClient();
+          const mode = getOutputMode();
+          const authMode = (["oauth1", "oauth2-user"].includes(opts.auth ?? "") ? opts.auth : "bearer") as "bearer" | "oauth1" | "oauth2-user";
+
+          let userId: string;
+          let resolvedUser: { id: string; username: string; name?: string } | undefined;
+
+          if (isNumericId(user)) {
+            userId = user;
+          } else {
+            const username = stripAt(user);
+            const lookup = await tc.getUserByUsername(username, { auth: "bearer" });
+            userId = lookup.data.id;
+            resolvedUser = { id: lookup.data.id, username: lookup.data.username ?? username, name: lookup.data.name };
+          }
+
+          const result = await tc.getOwnedLists(userId, {
+            listFields: opts.listFields,
+            expansions: opts.expansions,
+            userFields: opts.userFields,
+            maxResults: opts.maxResults,
+            paginationToken: opts.paginationToken,
+            auth: authMode,
+          });
+
+          if (mode === "json") {
+            jsonOutput({ resolved_user: resolvedUser, ...result });
+          } else {
+            formatListsOutput(result.data, result.meta?.result_count ?? 0);
+            if (result.meta?.next_token) {
+              console.log(`\n(next page: --pagination-token ${result.meta.next_token})`);
+            }
+          }
+        } catch (err: any) {
+          console.error(`Error: ${err.message}`);
+          process.exit(1);
+        }
+      },
+    );
+
+  program
+    .command("list-tweets <listId>")
+    .description("Get tweets from a list")
+    .option("--tweet-fields <csv>", "Tweet fields (comma-separated)", parseCsv)
+    .option("--expansions <csv>", "Expansions (comma-separated)", parseCsv)
+    .option("--user-fields <csv>", "User fields for expansions (comma-separated)", parseCsv)
+    .option("--max-results <n>", "Max results per page", parsePositiveInteger)
+    .option("--pagination-token <token>", "Pagination token")
+    .option("--auth <mode>", "Auth mode: bearer | oauth1 | oauth2-user", "bearer")
+    .action(
+      async (
+        listId: string,
+        opts: {
+          tweetFields?: string[];
+          expansions?: string[];
+          userFields?: string[];
+          maxResults?: number;
+          paginationToken?: string;
+          auth?: string;
+        },
+      ) => {
+        try {
+          const tc = getTwitterClient();
+          const mode = getOutputMode();
+          const authMode = (["oauth1", "oauth2-user"].includes(opts.auth ?? "") ? opts.auth : "bearer") as "bearer" | "oauth1" | "oauth2-user";
+
+          const result = await tc.getListTweets(listId, {
+            tweetFields: opts.tweetFields,
+            expansions: opts.expansions,
+            userFields: opts.userFields,
+            maxResults: opts.maxResults,
+            paginationToken: opts.paginationToken,
+            auth: authMode,
+          });
+
+          if (mode === "json") {
+            jsonOutput(result);
+          } else {
+            const userMap = new Map<string, { name?: string; username?: string }>();
+            if (result.includes?.users) {
+              for (const u of result.includes.users) {
+                userMap.set(u.id, { name: u.name, username: u.username });
+              }
+            }
+            for (const tweet of result.data ?? []) {
+              const author = tweet.author_id ? userMap.get(tweet.author_id) : undefined;
+              const authorStr = author ? `@${author.username ?? "?"}` : "";
+              const textSnippet = (tweet.text ?? "").slice(0, 100).replace(/\n/g, " ");
+              console.log(`${tweet.id}\t${tweet.created_at ?? ""}\t${authorStr}\t${textSnippet}`);
+            }
+            if (result.meta?.next_token) {
+              console.log(`\n(next page: --pagination-token ${result.meta.next_token})`);
+            }
+          }
+        } catch (err: any) {
+          console.error(`Error: ${err.message}`);
+          process.exit(1);
+        }
+      },
+    );
+
+  program
+    .command("list-members <listId>")
+    .description("Get members of a list")
+    .option("--user-fields <csv>", "User fields (comma-separated)", parseCsv)
+    .option("--expansions <csv>", "Expansions (comma-separated)", parseCsv)
+    .option("--tweet-fields <csv>", "Tweet fields for expansions (comma-separated)", parseCsv)
+    .option("--max-results <n>", "Max results per page", parsePositiveInteger)
+    .option("--pagination-token <token>", "Pagination token")
+    .option("--auth <mode>", "Auth mode: bearer | oauth1 | oauth2-user", "bearer")
+    .action(
+      async (
+        listId: string,
+        opts: {
+          userFields?: string[];
+          expansions?: string[];
+          tweetFields?: string[];
+          maxResults?: number;
+          paginationToken?: string;
+          auth?: string;
+        },
+      ) => {
+        try {
+          const tc = getTwitterClient();
+          const mode = getOutputMode();
+          const authMode = (["oauth1", "oauth2-user"].includes(opts.auth ?? "") ? opts.auth : "bearer") as "bearer" | "oauth1" | "oauth2-user";
+
+          const result = await tc.getListMembers(listId, {
+            userFields: opts.userFields,
+            expansions: opts.expansions,
+            tweetFields: opts.tweetFields,
+            maxResults: opts.maxResults,
+            paginationToken: opts.paginationToken,
+            auth: authMode,
+          });
+
+          if (mode === "json") {
+            jsonOutput(result);
+          } else {
+            console.log(`Members: ${result.meta?.result_count ?? result.data?.length ?? 0}`);
+            for (const user of result.data ?? []) {
+              console.log(`@${user.username ?? "?"}\t${user.name ?? ""}\t${user.id}`);
+            }
+            if (result.meta?.next_token) {
+              console.log(`\n(next page: --pagination-token ${result.meta.next_token})`);
+            }
+          }
+        } catch (err: any) {
+          console.error(`Error: ${err.message}`);
+          process.exit(1);
+        }
+      },
+    );
+
+  // --- delete tweet ---
+  program
+    .command("delete <tweetId>")
+    .description("Delete a tweet (requires OAuth1 credentials)")
+    .option("--dry-run", "Preview the request without actually deleting")
+    .action(
+      async (
+        tweetId: string,
+        opts: { dryRun?: boolean },
+      ) => {
+        try {
+          const tc = getTwitterClient();
+          const mode = getOutputMode();
+
+          if (opts.dryRun) {
+            const summary = {
+              dry_run: true,
+              method: "DELETE",
+              url: `https://api.twitter.com/2/tweets/${tweetId}`,
+              auth: "oauth1",
+            };
+            if (mode === "json") {
+              jsonOutput(summary);
+            } else {
+              console.log(`[dry-run] method: ${summary.method}`);
+              console.log(`[dry-run] url: ${summary.url}`);
+              console.log(`[dry-run] auth: ${summary.auth}`);
+            }
+            return;
+          }
+
+          const result = await tc.deleteTweet(tweetId);
+
+          if (mode === "json") {
+            jsonOutput({ tweet_id: tweetId, deleted: result.deleted });
+          } else {
+            console.log(`Tweet ${tweetId} deleted: ${result.deleted}`);
+          }
+        } catch (err: any) {
+          console.error(`Error: ${err.message}`);
+          process.exit(1);
+        }
+      },
+    );
+
   // --- bookmarks ---
   const bookmarksCmd = program.command("bookmarks").description("Bookmark commands (requires X_OAUTH2_USER_TOKEN)");
 
@@ -1614,6 +1926,21 @@ function formatFollowingOutput(data: Array<{ id: string; username?: string; name
   console.log(`Following: ${totalCount} users`);
   for (const user of data) {
     console.log(`@${user.username ?? "?"}\t${user.name ?? ""}\t${user.id}`);
+  }
+}
+
+function formatFollowersOutput(data: Array<{ id: string; username?: string; name?: string }>, totalCount: number): void {
+  console.log(`Followers: ${totalCount} users`);
+  for (const user of data) {
+    console.log(`@${user.username ?? "?"}\t${user.name ?? ""}\t${user.id}`);
+  }
+}
+
+function formatListsOutput(data: Array<{ id: string; name: string; description?: string }>, totalCount: number): void {
+  console.log(`Lists: ${totalCount}`);
+  for (const list of data) {
+    const desc = list.description ? `\t${list.description}` : "";
+    console.log(`${list.id}\t${list.name}${desc}`);
   }
 }
 

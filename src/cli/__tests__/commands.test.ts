@@ -162,6 +162,44 @@ function createMockTwitterClient(): TwitterClient {
     updateProfileBanner: vi.fn().mockResolvedValue(undefined),
     removeProfileBanner: vi.fn().mockResolvedValue(undefined),
     validateBannerImage: vi.fn(),
+    getFollowers: vi.fn().mockResolvedValue({
+      data: [
+        { id: "100", username: "follower1", name: "Follower One" },
+        { id: "200", username: "follower2", name: "Follower Two" },
+      ],
+      meta: { result_count: 2 },
+    }),
+    getAllFollowers: vi.fn().mockResolvedValue({
+      data: [
+        { id: "100", username: "follower1", name: "Follower One" },
+        { id: "200", username: "follower2", name: "Follower Two" },
+        { id: "300", username: "follower3", name: "Follower Three" },
+      ],
+      meta: { result_count: 3 },
+    }),
+    getOwnedLists: vi.fn().mockResolvedValue({
+      data: [
+        { id: "list1", name: "Tech", description: "Tech list" },
+        { id: "list2", name: "AI News" },
+      ],
+      meta: { result_count: 2 },
+    }),
+    getListTweets: vi.fn().mockResolvedValue({
+      data: [
+        { id: "t10", text: "List tweet 1", author_id: "a1", created_at: "2026-06-01T00:00:00Z" },
+        { id: "t11", text: "List tweet 2", author_id: "a2", created_at: "2026-06-02T00:00:00Z" },
+      ],
+      includes: { users: [{ id: "a1", username: "author1", name: "Author One" }, { id: "a2", username: "author2", name: "Author Two" }] },
+      meta: { result_count: 2 },
+    }),
+    getListMembers: vi.fn().mockResolvedValue({
+      data: [
+        { id: "m1", username: "member1", name: "Member One" },
+        { id: "m2", username: "member2", name: "Member Two" },
+      ],
+      meta: { result_count: 2 },
+    }),
+    deleteTweet: vi.fn().mockResolvedValue({ deleted: true }),
   };
   return mock as TwitterClient;
 }
@@ -1476,6 +1514,229 @@ describe("CLI commands", () => {
       );
       await run(["search", "test"], client);
       expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("API failed"));
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    });
+  });
+
+  describe("followers", () => {
+    it("calls getUserByUsername then getFollowers when handle is given", async () => {
+      const { twitterClient } = await run(["followers", "@zeimu_ai"]);
+      expect(twitterClient.getUserByUsername).toHaveBeenCalledWith("zeimu_ai", expect.objectContaining({ auth: "bearer" }));
+      expect(twitterClient.getFollowers).toHaveBeenCalledWith("12345", expect.any(Object));
+    });
+
+    it("calls getFollowers directly with numeric user id", async () => {
+      const { twitterClient } = await run(["followers", "99999"]);
+      expect(twitterClient.getUserByUsername).not.toHaveBeenCalled();
+      expect(twitterClient.getFollowers).toHaveBeenCalledWith("99999", expect.any(Object));
+    });
+
+    it("calls getAllFollowers when --all is set", async () => {
+      const { twitterClient } = await run(["followers", "@zeimu_ai", "--all"]);
+      expect(twitterClient.getAllFollowers).toHaveBeenCalledWith("12345", expect.any(Object));
+    });
+
+    it("outputs followers list in human mode", async () => {
+      await run(["followers", "99999"]);
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Followers: 2"));
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("@follower1"));
+    });
+
+    it("outputs JSON in json mode", async () => {
+      await run(["--json", "followers", "99999"]);
+      const output = logSpy.mock.calls[0][0];
+      const parsed = JSON.parse(output);
+      expect(parsed.data).toHaveLength(2);
+      expect(parsed.meta.result_count).toBe(2);
+    });
+
+    it("includes resolved_user in JSON when handle lookup is used", async () => {
+      await run(["--json", "followers", "@zeimu_ai"]);
+      const parsed = JSON.parse(logSpy.mock.calls[0][0]);
+      expect(parsed.resolved_user).toBeDefined();
+      expect(parsed.resolved_user.username).toBe("zeimu_ai");
+    });
+
+    it("prints error when --all and --pagination-token both set", async () => {
+      await run(["followers", "99999", "--all", "--pagination-token", "abc"]);
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("cannot be used together"));
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    });
+
+    it("passes --max-results to getFollowers", async () => {
+      const { twitterClient } = await run(["followers", "99999", "--max-results", "500"]);
+      expect(twitterClient.getFollowers).toHaveBeenCalledWith(
+        "99999",
+        expect.objectContaining({ maxResults: 500 }),
+      );
+    });
+
+    it("prints error and exit 1 on API failure", async () => {
+      const tc = createMockTwitterClient();
+      (tc.getFollowers as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new Error("X API error 401: Unauthorized"),
+      );
+      await run(["followers", "99999"], undefined, tc);
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("401"));
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    });
+  });
+
+  describe("lists", () => {
+    it("calls getUserByUsername then getOwnedLists when handle is given", async () => {
+      const { twitterClient } = await run(["lists", "@zeimu_ai"]);
+      expect(twitterClient.getUserByUsername).toHaveBeenCalledWith("zeimu_ai", expect.any(Object));
+      expect(twitterClient.getOwnedLists).toHaveBeenCalledWith("12345", expect.any(Object));
+    });
+
+    it("calls getOwnedLists directly with numeric user id", async () => {
+      const { twitterClient } = await run(["lists", "99999"]);
+      expect(twitterClient.getUserByUsername).not.toHaveBeenCalled();
+      expect(twitterClient.getOwnedLists).toHaveBeenCalledWith("99999", expect.any(Object));
+    });
+
+    it("outputs lists in human mode", async () => {
+      await run(["lists", "99999"]);
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Lists: 2"));
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Tech"));
+    });
+
+    it("outputs JSON in json mode", async () => {
+      await run(["--json", "lists", "99999"]);
+      const parsed = JSON.parse(logSpy.mock.calls[0][0]);
+      expect(parsed.data).toHaveLength(2);
+      expect(parsed.meta.result_count).toBe(2);
+    });
+
+    it("prints error and exit 1 on API failure", async () => {
+      const tc = createMockTwitterClient();
+      (tc.getOwnedLists as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new Error("X API error 401: Unauthorized"),
+      );
+      await run(["lists", "99999"], undefined, tc);
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("401"));
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    });
+  });
+
+  describe("list-tweets", () => {
+    it("calls getListTweets with list id", async () => {
+      const { twitterClient } = await run(["list-tweets", "list99"]);
+      expect(twitterClient.getListTweets).toHaveBeenCalledWith("list99", expect.any(Object));
+    });
+
+    it("outputs tweets in human mode", async () => {
+      await run(["list-tweets", "list99"]);
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("t10"));
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("@author1"));
+    });
+
+    it("outputs JSON in json mode", async () => {
+      await run(["--json", "list-tweets", "list99"]);
+      const parsed = JSON.parse(logSpy.mock.calls[0][0]);
+      expect(parsed.data).toHaveLength(2);
+    });
+
+    it("passes --max-results to getListTweets", async () => {
+      const { twitterClient } = await run(["list-tweets", "list99", "--max-results", "50"]);
+      expect(twitterClient.getListTweets).toHaveBeenCalledWith(
+        "list99",
+        expect.objectContaining({ maxResults: 50 }),
+      );
+    });
+
+    it("prints error and exit 1 on API failure", async () => {
+      const tc = createMockTwitterClient();
+      (tc.getListTweets as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new Error("X API error 403: Forbidden"),
+      );
+      await run(["list-tweets", "list99"], undefined, tc);
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("403"));
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    });
+  });
+
+  describe("list-members", () => {
+    it("calls getListMembers with list id", async () => {
+      const { twitterClient } = await run(["list-members", "list99"]);
+      expect(twitterClient.getListMembers).toHaveBeenCalledWith("list99", expect.any(Object));
+    });
+
+    it("outputs members in human mode", async () => {
+      await run(["list-members", "list99"]);
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Members: 2"));
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("@member1"));
+    });
+
+    it("outputs JSON in json mode", async () => {
+      await run(["--json", "list-members", "list99"]);
+      const parsed = JSON.parse(logSpy.mock.calls[0][0]);
+      expect(parsed.data).toHaveLength(2);
+    });
+
+    it("passes --user-fields to getListMembers", async () => {
+      const { twitterClient } = await run(["list-members", "list99", "--user-fields", "username,name"]);
+      expect(twitterClient.getListMembers).toHaveBeenCalledWith(
+        "list99",
+        expect.objectContaining({ userFields: ["username", "name"] }),
+      );
+    });
+
+    it("prints error and exit 1 on API failure", async () => {
+      const tc = createMockTwitterClient();
+      (tc.getListMembers as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new Error("X API error 404: Not Found"),
+      );
+      await run(["list-members", "list99"], undefined, tc);
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("404"));
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    });
+  });
+
+  describe("delete", () => {
+    it("calls deleteTweet with tweet id", async () => {
+      const { twitterClient } = await run(["delete", "99999"]);
+      expect(twitterClient.deleteTweet).toHaveBeenCalledWith("99999");
+    });
+
+    it("outputs confirmation in human mode", async () => {
+      await run(["delete", "99999"]);
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("99999"));
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("deleted: true"));
+    });
+
+    it("outputs JSON in json mode", async () => {
+      await run(["--json", "delete", "99999"]);
+      const parsed = JSON.parse(logSpy.mock.calls[0][0]);
+      expect(parsed.tweet_id).toBe("99999");
+      expect(parsed.deleted).toBe(true);
+    });
+
+    it("does NOT call deleteTweet in --dry-run mode", async () => {
+      const { twitterClient } = await run(["delete", "99999", "--dry-run"]);
+      expect(twitterClient.deleteTweet).not.toHaveBeenCalled();
+    });
+
+    it("outputs dry-run info in human mode", async () => {
+      await run(["delete", "99999", "--dry-run"]);
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("[dry-run]"));
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("DELETE"));
+    });
+
+    it("outputs JSON dry-run in json mode", async () => {
+      await run(["--json", "delete", "99999", "--dry-run"]);
+      const parsed = JSON.parse(logSpy.mock.calls[0][0]);
+      expect(parsed.dry_run).toBe(true);
+      expect(parsed.method).toBe("DELETE");
+    });
+
+    it("prints error and exit 1 on API failure", async () => {
+      const tc = createMockTwitterClient();
+      (tc.deleteTweet as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new Error("X API error 403: Forbidden"),
+      );
+      await run(["delete", "99999"], undefined, tc);
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("403"));
       expect(exitSpy).toHaveBeenCalledWith(1);
     });
   });
