@@ -5,6 +5,8 @@ import {
   mockXaiResponse,
   mockXaiError,
 } from "../../__tests__/helpers/mock-fetch.js";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 describe("XaiClient", () => {
   let originalFetch: typeof globalThis.fetch;
@@ -366,4 +368,60 @@ describe("XaiClient", () => {
       expect(body.model).toBe("grok-3");
     });
   });
+
+  describe("mixed output types regression (reasoning / custom_tool_call)", () => {
+    it("should extract only output_text from message, ignoring reasoning and custom_tool_call", async () => {
+      // fixture は実 API 採取構造に基づく
+      const fixture = JSON.parse(
+        readFileSync(
+          join(
+            import.meta.dirname ?? new URL(".", import.meta.url).pathname,
+            "fixtures/mixed-output-types.json",
+          ),
+          "utf-8",
+        ),
+      );
+      const mockFetch = vi.fn().mockResolvedValue(
+        new Response(JSON.stringify(fixture), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+      globalThis.fetch = mockFetch;
+
+      const client = new XaiClient({ apiKey: "test-key" });
+      const result = await client.search("test");
+
+      expect(result.text).toBe("期待される本文");
+    });
+
+    it("should return empty string when only reasoning and custom_tool_call are present", async () => {
+      const body = {
+        output: [
+          { type: "reasoning", id: "r1", status: "completed", summary: [] },
+          {
+            type: "custom_tool_call",
+            call_id: "c1",
+            id: "t1",
+            name: "x_search",
+            input: "{}",
+            status: "completed",
+          },
+        ],
+      };
+      const mockFetch = vi.fn().mockResolvedValue(
+        new Response(JSON.stringify(body), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+      globalThis.fetch = mockFetch;
+
+      const client = new XaiClient({ apiKey: "test-key" });
+      const result = await client.ask("test");
+
+      expect(result.text).toBe("");
+    });
+  });
+
 });
