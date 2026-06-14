@@ -423,6 +423,158 @@ describe("CLI commands", () => {
       expect(xaiClient.search).toHaveBeenCalledWith("AI", expect.any(Object));
     });
 
+    // Issue #9: new --raw options
+    it("--raw + --max-results passes maxResults to searchRecent", async () => {
+      const { twitterClient } = await run(["search", "AI", "--raw", "--max-results", "25"]);
+      expect(twitterClient.searchRecent).toHaveBeenCalledWith(
+        "AI",
+        expect.objectContaining({ maxResults: 25 }),
+      );
+    });
+
+    it("--raw + --tweet-fields passes tweetFields to searchRecent", async () => {
+      const { twitterClient } = await run(["search", "AI", "--raw", "--tweet-fields", "id,text,created_at"]);
+      expect(twitterClient.searchRecent).toHaveBeenCalledWith(
+        "AI",
+        expect.objectContaining({ tweetFields: ["id", "text", "created_at"] }),
+      );
+    });
+
+    it("--raw + --expansions passes expansions to searchRecent", async () => {
+      const { twitterClient } = await run(["search", "AI", "--raw", "--expansions", "author_id,attachments.media_keys"]);
+      expect(twitterClient.searchRecent).toHaveBeenCalledWith(
+        "AI",
+        expect.objectContaining({ expansions: ["author_id", "attachments.media_keys"] }),
+      );
+    });
+
+    it("--raw + --user-fields passes userFields to searchRecent", async () => {
+      const { twitterClient } = await run(["search", "AI", "--raw", "--user-fields", "name,username"]);
+      expect(twitterClient.searchRecent).toHaveBeenCalledWith(
+        "AI",
+        expect.objectContaining({ userFields: ["name", "username"] }),
+      );
+    });
+
+    it("--raw + --media-fields passes mediaFields to searchRecent", async () => {
+      const { twitterClient } = await run(["search", "AI", "--raw", "--media-fields", "url,type"]);
+      expect(twitterClient.searchRecent).toHaveBeenCalledWith(
+        "AI",
+        expect.objectContaining({ mediaFields: ["url", "type"] }),
+      );
+    });
+
+    it("--raw + --pagination-token passes paginationToken to searchRecent", async () => {
+      const { twitterClient } = await run(["search", "AI", "--raw", "--pagination-token", "abc123"]);
+      expect(twitterClient.searchRecent).toHaveBeenCalledWith(
+        "AI",
+        expect.objectContaining({ paginationToken: "abc123" }),
+      );
+    });
+
+    it("--raw + --start-time passes startTime directly to searchRecent", async () => {
+      const { twitterClient } = await run(["search", "AI", "--raw", "--start-time", "2026-01-01T00:00:00Z"]);
+      expect(twitterClient.searchRecent).toHaveBeenCalledWith(
+        "AI",
+        expect.objectContaining({ startTime: "2026-01-01T00:00:00Z" }),
+      );
+    });
+
+    it("--raw + --end-time passes endTime directly to searchRecent", async () => {
+      const { twitterClient } = await run(["search", "AI", "--raw", "--end-time", "2026-01-31T23:59:59Z"]);
+      expect(twitterClient.searchRecent).toHaveBeenCalledWith(
+        "AI",
+        expect.objectContaining({ endTime: "2026-01-31T23:59:59Z" }),
+      );
+    });
+
+    it("--raw + --start-time overrides --from when both specified", async () => {
+      const { twitterClient } = await run(["search", "AI", "--raw", "--from", "2026-01-01", "--start-time", "2026-02-01T12:00:00Z"]);
+      expect(twitterClient.searchRecent).toHaveBeenCalledWith(
+        "AI",
+        expect.objectContaining({ startTime: "2026-02-01T12:00:00Z" }),
+      );
+    });
+
+    it("--raw + --end-time overrides --to when both specified", async () => {
+      const { twitterClient } = await run(["search", "AI", "--raw", "--to", "2026-01-31", "--end-time", "2026-02-28T23:59:59Z"]);
+      expect(twitterClient.searchRecent).toHaveBeenCalledWith(
+        "AI",
+        expect.objectContaining({ endTime: "2026-02-28T23:59:59Z" }),
+      );
+    });
+
+    it("--raw + --auth bearer passes auth to searchRecent", async () => {
+      const { twitterClient } = await run(["search", "AI", "--raw", "--auth", "bearer"]);
+      expect(twitterClient.searchRecent).toHaveBeenCalledWith(
+        "AI",
+        expect.objectContaining({ auth: "bearer" }),
+      );
+    });
+
+    it("--raw + --auth oauth1 passes oauth1 auth to searchRecent", async () => {
+      const { twitterClient } = await run(["search", "AI", "--raw", "--auth", "oauth1"]);
+      expect(twitterClient.searchRecent).toHaveBeenCalledWith(
+        "AI",
+        expect.objectContaining({ auth: "oauth1" }),
+      );
+    });
+
+    it("--raw + --max-results takes priority over --count for maxResults", async () => {
+      const { twitterClient } = await run(["search", "AI", "--raw", "--max-results", "30", "--count", "50"]);
+      expect(twitterClient.searchRecent).toHaveBeenCalledWith(
+        "AI",
+        expect.objectContaining({ maxResults: 30 }),
+      );
+    });
+
+    // High 2: --raw --max-results 10-100 boundary enforcement
+    it("--raw + --max-results 10 (lower boundary) is accepted", async () => {
+      const { twitterClient } = await run(["search", "AI", "--raw", "--max-results", "10"]);
+      expect(twitterClient.searchRecent).toHaveBeenCalledWith(
+        "AI",
+        expect.objectContaining({ maxResults: 10 }),
+      );
+    });
+
+    it("--raw + --max-results 100 (upper boundary) is accepted", async () => {
+      const { twitterClient } = await run(["search", "AI", "--raw", "--max-results", "100"]);
+      expect(twitterClient.searchRecent).toHaveBeenCalledWith(
+        "AI",
+        expect.objectContaining({ maxResults: 100 }),
+      );
+    });
+
+    it("--raw + --max-results 9 (below lower boundary) throws InvalidArgumentError", async () => {
+      await expect(run(["search", "AI", "--raw", "--max-results", "9"])).rejects.toThrow();
+    });
+
+    it("--raw + --max-results 101 (above upper boundary) throws InvalidArgumentError", async () => {
+      await expect(run(["search", "AI", "--raw", "--max-results", "101"])).rejects.toThrow();
+    });
+
+    // Medium 3: search --since-id/--until-id
+    it("--raw + --since-id passes sinceId to searchRecent", async () => {
+      const { twitterClient } = await run(["search", "AI", "--raw", "--since-id", "1234567890"]);
+      expect(twitterClient.searchRecent).toHaveBeenCalledWith(
+        "AI",
+        expect.objectContaining({ sinceId: "1234567890" }),
+      );
+    });
+
+    it("--raw + --until-id passes untilId to searchRecent", async () => {
+      const { twitterClient } = await run(["search", "AI", "--raw", "--until-id", "9876543210"]);
+      expect(twitterClient.searchRecent).toHaveBeenCalledWith(
+        "AI",
+        expect.objectContaining({ untilId: "9876543210" }),
+      );
+    });
+
+    // Medium 4: --auth choices validation (search)
+    it("--raw + --auth with invalid value throws", async () => {
+      await expect(run(["search", "AI", "--raw", "--auth", "invalid"])).rejects.toThrow();
+    });
+
   });
 
   describe("user", () => {
@@ -629,6 +781,137 @@ describe("CLI commands", () => {
         expect.objectContaining({ count: 2 }),
       );
       expect(twitterClient.getMentions).not.toHaveBeenCalled();
+    });
+
+    // High 1: --count path should propagate all new fields to getMentionsCount
+    it("--count + --expansions propagates expansions to getMentionsCount", async () => {
+      const { twitterClient } = await run(["mentions", "@zeimu_ai", "--count", "2", "--expansions", "author_id"]);
+      expect(twitterClient.getMentionsCount).toHaveBeenCalledWith(
+        "12345",
+        expect.objectContaining({ expansions: ["author_id"] }),
+      );
+    });
+
+    it("--count + --user-fields propagates userFields to getMentionsCount", async () => {
+      const { twitterClient } = await run(["mentions", "@zeimu_ai", "--count", "2", "--user-fields", "name,username"]);
+      expect(twitterClient.getMentionsCount).toHaveBeenCalledWith(
+        "12345",
+        expect.objectContaining({ userFields: ["name", "username"] }),
+      );
+    });
+
+    it("--count + --media-fields propagates mediaFields to getMentionsCount", async () => {
+      const { twitterClient } = await run(["mentions", "@zeimu_ai", "--count", "2", "--media-fields", "url,type"]);
+      expect(twitterClient.getMentionsCount).toHaveBeenCalledWith(
+        "12345",
+        expect.objectContaining({ mediaFields: ["url", "type"] }),
+      );
+    });
+
+    it("--count + --start-time propagates startTime to getMentionsCount", async () => {
+      const { twitterClient } = await run(["mentions", "@zeimu_ai", "--count", "2", "--start-time", "2026-01-01T00:00:00Z"]);
+      expect(twitterClient.getMentionsCount).toHaveBeenCalledWith(
+        "12345",
+        expect.objectContaining({ startTime: "2026-01-01T00:00:00Z" }),
+      );
+    });
+
+    it("--count + --end-time propagates endTime to getMentionsCount", async () => {
+      const { twitterClient } = await run(["mentions", "@zeimu_ai", "--count", "2", "--end-time", "2026-12-31T23:59:59Z"]);
+      expect(twitterClient.getMentionsCount).toHaveBeenCalledWith(
+        "12345",
+        expect.objectContaining({ endTime: "2026-12-31T23:59:59Z" }),
+      );
+    });
+
+    it("--count + --since-id propagates sinceId to getMentionsCount", async () => {
+      const { twitterClient } = await run(["mentions", "@zeimu_ai", "--count", "2", "--since-id", "100"]);
+      expect(twitterClient.getMentionsCount).toHaveBeenCalledWith(
+        "12345",
+        expect.objectContaining({ sinceId: "100" }),
+      );
+    });
+
+    it("--count + --until-id propagates untilId to getMentionsCount", async () => {
+      const { twitterClient } = await run(["mentions", "@zeimu_ai", "--count", "2", "--until-id", "200"]);
+      expect(twitterClient.getMentionsCount).toHaveBeenCalledWith(
+        "12345",
+        expect.objectContaining({ untilId: "200" }),
+      );
+    });
+
+    // Medium 4: --auth choices validation (mentions)
+    it("--auth with invalid value throws", async () => {
+      await expect(run(["mentions", "@zeimu_ai", "--auth", "invalid"])).rejects.toThrow();
+    });
+
+    // Issue #10: new mentions options
+    it("--expansions passes expansions to getMentions", async () => {
+      const { twitterClient } = await run(["mentions", "@zeimu_ai", "--expansions", "author_id,attachments.media_keys"]);
+      expect(twitterClient.getMentions).toHaveBeenCalledWith(
+        "12345",
+        expect.objectContaining({ expansions: ["author_id", "attachments.media_keys"] }),
+      );
+    });
+
+    it("--user-fields passes userFields to getMentions", async () => {
+      const { twitterClient } = await run(["mentions", "@zeimu_ai", "--user-fields", "name,username"]);
+      expect(twitterClient.getMentions).toHaveBeenCalledWith(
+        "12345",
+        expect.objectContaining({ userFields: ["name", "username"] }),
+      );
+    });
+
+    it("--media-fields passes mediaFields to getMentions", async () => {
+      const { twitterClient } = await run(["mentions", "@zeimu_ai", "--media-fields", "url,type"]);
+      expect(twitterClient.getMentions).toHaveBeenCalledWith(
+        "12345",
+        expect.objectContaining({ mediaFields: ["url", "type"] }),
+      );
+    });
+
+    it("--start-time passes startTime to getMentions", async () => {
+      const { twitterClient } = await run(["mentions", "@zeimu_ai", "--start-time", "2026-01-01T00:00:00Z"]);
+      expect(twitterClient.getMentions).toHaveBeenCalledWith(
+        "12345",
+        expect.objectContaining({ startTime: "2026-01-01T00:00:00Z" }),
+      );
+    });
+
+    it("--end-time passes endTime to getMentions", async () => {
+      const { twitterClient } = await run(["mentions", "@zeimu_ai", "--end-time", "2026-01-31T23:59:59Z"]);
+      expect(twitterClient.getMentions).toHaveBeenCalledWith(
+        "12345",
+        expect.objectContaining({ endTime: "2026-01-31T23:59:59Z" }),
+      );
+    });
+
+    it("--since-id passes sinceId to getMentions", async () => {
+      const { twitterClient } = await run(["mentions", "@zeimu_ai", "--since-id", "100"]);
+      expect(twitterClient.getMentions).toHaveBeenCalledWith(
+        "12345",
+        expect.objectContaining({ sinceId: "100" }),
+      );
+    });
+
+    it("--until-id passes untilId to getMentions", async () => {
+      const { twitterClient } = await run(["mentions", "@zeimu_ai", "--until-id", "200"]);
+      expect(twitterClient.getMentions).toHaveBeenCalledWith(
+        "12345",
+        expect.objectContaining({ untilId: "200" }),
+      );
+    });
+
+    it("new options are absent when not specified (backward compat)", async () => {
+      const { twitterClient } = await run(["mentions", "@zeimu_ai"]);
+      const callArgs = (twitterClient.getMentions as ReturnType<typeof vi.fn>).mock.calls[0][1];
+      expect(callArgs.expansions).toBeUndefined();
+      expect(callArgs.userFields).toBeUndefined();
+      expect(callArgs.mediaFields).toBeUndefined();
+      expect(callArgs.startTime).toBeUndefined();
+      expect(callArgs.endTime).toBeUndefined();
+      expect(callArgs.sinceId).toBeUndefined();
+      expect(callArgs.untilId).toBeUndefined();
     });
   });
 

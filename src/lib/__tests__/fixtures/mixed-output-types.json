@@ -1,0 +1,27 @@
+{
+  "output": [
+    {
+      "type": "reasoning",
+      "id": "r1",
+      "status": "completed",
+      "summary": []
+    },
+    {
+      "type": "custom_tool_call",
+      "call_id": "c1",
+      "id": "t1",
+      "name": "x_search",
+      "input": "{}",
+      "status": "completed"
+    },
+    {
+      "type": "message",
+      "content": [
+        {
+          "type": "output_text",
+          "text": "期待される本文"
+        }
+      ]
+    }
+  ]
+}
