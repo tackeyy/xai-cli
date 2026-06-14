@@ -1345,6 +1345,71 @@ describe("TwitterClient.getMentions", () => {
     expect(url).toContain("tweet.fields");
     expect(url).toContain("public_metrics");
   });
+
+  it("passes expansions and userFields as query params", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ data: [], meta: { result_count: 0 } }), { status: 200 }),
+    );
+    const tc = makeBearerClient();
+    await tc.getMentions("123", {
+      expansions: ["author_id", "attachments.media_keys"],
+      userFields: ["name", "username"],
+    });
+    const url = String(fetchSpy.mock.calls[0][0]);
+    expect(url).toContain("expansions=author_id%2Cattachments.media_keys");
+    expect(url).toContain("user.fields=name%2Cusername");
+  });
+
+  it("passes mediaFields as query param", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ data: [], meta: { result_count: 0 } }), { status: 200 }),
+    );
+    const tc = makeBearerClient();
+    await tc.getMentions("123", { mediaFields: ["url", "preview_image_url"] });
+    const url = String(fetchSpy.mock.calls[0][0]);
+    expect(url).toContain("media.fields=url%2Cpreview_image_url");
+  });
+
+  it("passes startTime and endTime as query params", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ data: [], meta: { result_count: 0 } }), { status: 200 }),
+    );
+    const tc = makeBearerClient();
+    await tc.getMentions("123", {
+      startTime: "2026-01-01T00:00:00Z",
+      endTime: "2026-01-31T23:59:59Z",
+    });
+    const url = String(fetchSpy.mock.calls[0][0]);
+    expect(url).toContain("start_time=2026-01-01T00%3A00%3A00Z");
+    expect(url).toContain("end_time=2026-01-31T23%3A59%3A59Z");
+  });
+
+  it("passes sinceId and untilId as query params", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ data: [], meta: { result_count: 0 } }), { status: 200 }),
+    );
+    const tc = makeBearerClient();
+    await tc.getMentions("123", { sinceId: "100", untilId: "200" });
+    const url = String(fetchSpy.mock.calls[0][0]);
+    expect(url).toContain("since_id=100");
+    expect(url).toContain("until_id=200");
+  });
+
+  it("omits undefined optional params (backward compat)", async () => {
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ data: [], meta: { result_count: 0 } }), { status: 200 }),
+    );
+    const tc = makeBearerClient();
+    await tc.getMentions("123");
+    const url = String(fetchSpy.mock.calls[0][0]);
+    expect(url).not.toContain("expansions");
+    expect(url).not.toContain("user.fields");
+    expect(url).not.toContain("media.fields");
+    expect(url).not.toContain("start_time");
+    expect(url).not.toContain("end_time");
+    expect(url).not.toContain("since_id");
+    expect(url).not.toContain("until_id");
+  });
 });
 
 describe("TwitterClient.getMentionsCount", () => {

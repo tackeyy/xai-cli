@@ -196,6 +196,15 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
     .option("--exclude <handles>", "Exclude handles (comma-separated)")
     .option("--count <n>", "Target number of posts to collect (1-1000)", parseCount)
     .option("--raw", "Output raw X API v2 response (skip LLM formatting)")
+    .option("--max-results <n>", "Max results per page for --raw (1-100)", parsePositiveInteger)
+    .option("--tweet-fields <csv>", "Tweet fields for --raw (comma-separated)", parseCsv)
+    .option("--expansions <csv>", "Expansions for --raw (comma-separated)", parseCsv)
+    .option("--user-fields <csv>", "User fields for --raw (comma-separated)", parseCsv)
+    .option("--media-fields <csv>", "Media fields for --raw (comma-separated)", parseCsv)
+    .option("--pagination-token <token>", "Pagination token for --raw (single page)")
+    .option("--start-time <ISO8601>", "Start time for --raw (ISO8601; overrides --from)")
+    .option("--end-time <ISO8601>", "End time for --raw (ISO8601; overrides --to)")
+    .option("--auth <mode>", "Auth mode for --raw: bearer | oauth1", "bearer")
     .action(async (query, opts) => {
       try {
         const mode = getOutputMode();
@@ -204,14 +213,30 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
           if (opts.exclude) {
             process.stderr.write("Warning: --exclude is not supported with --raw and will be ignored.\n");
           }
-          const rawMaxResults = opts.count !== undefined ? Math.min(opts.count, 100) : undefined;
-          if (opts.count !== undefined && opts.count > 100) {
-            process.stderr.write("Warning: max_results is capped at 100 for --raw mode.\n");
+          // --max-results takes priority over --count; --count is capped at 100
+          let rawMaxResults: number | undefined;
+          if (opts.maxResults !== undefined) {
+            rawMaxResults = opts.maxResults;
+          } else if (opts.count !== undefined) {
+            rawMaxResults = Math.min(opts.count, 100);
+            if (opts.count > 100) {
+              process.stderr.write("Warning: max_results is capped at 100 for --raw mode.\n");
+            }
           }
+          // --start-time / --end-time override --from / --to
+          const startTime = opts.startTime ?? (opts.from ? opts.from + "T00:00:00Z" : undefined);
+          const endTime = opts.endTime ?? (opts.to ? opts.to + "T23:59:59Z" : undefined);
+          const authMode = (opts.auth === "oauth1" ? "oauth1" : "bearer") as "bearer" | "oauth1";
           const result = await tc.searchRecent(query, {
-            startTime: opts.from ? opts.from + "T00:00:00Z" : undefined,
-            endTime: opts.to ? opts.to + "T23:59:59Z" : undefined,
+            startTime,
+            endTime,
             maxResults: rawMaxResults,
+            tweetFields: opts.tweetFields,
+            expansions: opts.expansions,
+            userFields: opts.userFields,
+            mediaFields: opts.mediaFields,
+            paginationToken: opts.paginationToken,
+            auth: authMode,
           });
           console.log(JSON.stringify(result, null, 2));
         } else {
@@ -528,19 +553,33 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
     .command("mentions <user>")
     .description("Get mentions of a user via X API v2 GET /2/users/:id/mentions")
     .option("--tweet-fields <csv>", "Tweet fields (comma-separated)", parseCsv)
+    .option("--expansions <csv>", "Expansions (comma-separated)", parseCsv)
+    .option("--user-fields <csv>", "User fields for expansions (comma-separated)", parseCsv)
+    .option("--media-fields <csv>", "Media fields (comma-separated)", parseCsv)
     .option("--max-results <n>", "Max results per page (5-100)", parsePositiveInteger)
     .option("--pagination-token <token>", "Pagination token for next page")
     .option("--count <n>", "Target number of mentions to collect (1-1000, multi-page)", parseCount)
     .option("--auth <mode>", "Auth mode: bearer | oauth1", "bearer")
+    .option("--start-time <ISO8601>", "Start time (ISO8601)")
+    .option("--end-time <ISO8601>", "End time (ISO8601)")
+    .option("--since-id <id>", "Return results with tweet ID > since_id")
+    .option("--until-id <id>", "Return results with tweet ID < until_id")
     .action(
       async (
         user: string,
         opts: {
           tweetFields?: string[];
+          expansions?: string[];
+          userFields?: string[];
+          mediaFields?: string[];
           maxResults?: number;
           paginationToken?: string;
           count?: number;
           auth?: string;
+          startTime?: string;
+          endTime?: string;
+          sinceId?: string;
+          untilId?: string;
         },
       ) => {
         try {
@@ -568,9 +607,16 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
               })
             : await tc.getMentions(userId, {
                 tweetFields: opts.tweetFields,
+                expansions: opts.expansions,
+                userFields: opts.userFields,
+                mediaFields: opts.mediaFields,
                 maxResults: opts.maxResults,
                 paginationToken: opts.paginationToken,
                 auth: authMode,
+                startTime: opts.startTime,
+                endTime: opts.endTime,
+                sinceId: opts.sinceId,
+                untilId: opts.untilId,
               });
 
           if (mode === "json") {

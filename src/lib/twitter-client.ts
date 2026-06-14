@@ -951,16 +951,30 @@ export class TwitterClient {
     userId: string,
     opts?: {
       tweetFields?: string[];
+      expansions?: string[];
+      userFields?: string[];
+      mediaFields?: string[];
       maxResults?: number;
       paginationToken?: string;
+      startTime?: string;
+      endTime?: string;
+      sinceId?: string;
+      untilId?: string;
       auth?: "bearer" | "oauth1";
     },
   ): Promise<TwitterUserTimelineResponse> {
     const query: Record<string, string | number | undefined> = {};
     const tweetFields = opts?.tweetFields ?? MENTIONS_TWEET_FIELDS;
     if (tweetFields.length) query["tweet.fields"] = tweetFields.join(",");
+    if (opts?.expansions?.length) query.expansions = opts.expansions.join(",");
+    if (opts?.userFields?.length) query["user.fields"] = opts.userFields.join(",");
+    if (opts?.mediaFields?.length) query["media.fields"] = opts.mediaFields.join(",");
     if (opts?.maxResults) query.max_results = opts.maxResults;
     if (opts?.paginationToken) query.pagination_token = opts.paginationToken;
+    if (opts?.startTime) query.start_time = opts.startTime;
+    if (opts?.endTime) query.end_time = opts.endTime;
+    if (opts?.sinceId) query.since_id = opts.sinceId;
+    if (opts?.untilId) query.until_id = opts.untilId;
 
     const response = await this.get<TwitterUserTimelineResponse>(
       `/2/users/${encodeURIComponent(userId)}/mentions`,
