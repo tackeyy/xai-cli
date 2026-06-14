@@ -1,4 +1,6 @@
 import { createHmac } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { extname } from "node:path";
 import { computeTweetLength, TWEET_MAX_LENGTH } from "./tweet-length.js";
 import type {
   DmAvailability,
@@ -18,6 +20,17 @@ import type {
   TwitterUserProfile,
   TwitterUserTimelineResponse,
   TwitterDmEventsResponse,
+  TwitterListsResponse,
+  TwitterListTweetsResponse,
+  TwitterListMembersResponse,
+  DeleteTweetResult,
+  TwitterTweetsLookupResponse,
+  TwitterTweetCountsResponse,
+  TwitterUserSearchResponse,
+  MuteBlockResult,
+  TwitterSearchAllResponse,
+  TwitterTrendsResponse,
+  TwitterSpacesSearchResponse,
 } from "./twitter-types.js";
 
 export interface TwitterClientOptions {
@@ -43,12 +56,29 @@ export interface PostTweetInput {
   maxLength?: number;
   noLengthCheck?: boolean;
   quoteTweetId?: string;
+  mediaIds?: string[];
+  poll?: { options: string[]; durationMinutes: number };
 }
 
 export interface PostTweetPayload {
   text: string;
   reply?: { in_reply_to_tweet_id: string };
   quote_tweet_id?: string;
+  media?: { media_ids: string[] };
+  poll?: { options: string[]; duration_minutes: number };
+}
+
+export interface SendDirectMessageResult {
+  dm_conversation_id: string;
+  dm_event_id: string;
+}
+
+export interface BookmarkMutationResult {
+  bookmarked: boolean;
+}
+
+export interface UploadMediaResult {
+  media_id_string: string;
 }
 
 export interface PostTweetResult {
@@ -568,6 +598,353 @@ export class TwitterClient {
   }
 
 
+  // --- Followers ---
+
+  async getFollowers(
+    userId: string,
+    opts?: {
+      userFields?: string[];
+      expansions?: string[];
+      tweetFields?: string[];
+      maxResults?: number;
+      paginationToken?: string;
+      auth?: "bearer" | "oauth1";
+    },
+  ): Promise<TwitterFollowingResponse> {
+    const query: Record<string, string | number | undefined> = {};
+    if (opts?.userFields?.length) query["user.fields"] = opts.userFields.join(",");
+    if (opts?.expansions?.length) query.expansions = opts.expansions.join(",");
+    if (opts?.tweetFields?.length) query["tweet.fields"] = opts.tweetFields.join(",");
+    if (opts?.maxResults) query.max_results = opts.maxResults;
+    if (opts?.paginationToken) query.pagination_token = opts.paginationToken;
+
+    return this.get<TwitterFollowingResponse>(
+      `/2/users/${encodeURIComponent(userId)}/followers`,
+      { auth: opts?.auth ?? "bearer", query },
+    );
+  }
+
+  async getAllFollowers(
+    userId: string,
+    opts?: {
+      userFields?: string[];
+      expansions?: string[];
+      tweetFields?: string[];
+      maxResults?: number;
+      limitPages?: number;
+      auth?: "bearer" | "oauth1";
+    },
+  ): Promise<TwitterFollowingResponse> {
+    const maxPages = opts?.limitPages ?? 100;
+    const allData: TwitterUser[] = [];
+    let includes: TwitterIncludes = {};
+    let paginationToken: string | undefined;
+    let pages = 0;
+
+    do {
+      const res = await this.getFollowers(userId, {
+        ...opts,
+        paginationToken,
+      });
+
+      if (res.data) allData.push(...res.data);
+      includes = this.mergeIncludes(includes, res.includes);
+      paginationToken = res.meta?.next_token;
+      pages++;
+    } while (paginationToken && pages < maxPages);
+
+    return {
+      data: allData,
+      includes: Object.keys(includes).length > 0 ? includes : undefined,
+      meta: { result_count: allData.length },
+    };
+  }
+
+  // --- Lists ---
+
+  async getOwnedLists(
+    userId: string,
+    opts?: {
+      listFields?: string[];
+      expansions?: string[];
+      userFields?: string[];
+      maxResults?: number;
+      paginationToken?: string;
+      auth?: TwitterAuthMode;
+    },
+  ): Promise<TwitterListsResponse> {
+    const query: Record<string, string | number | undefined> = {};
+    if (opts?.listFields?.length) query["list.fields"] = opts.listFields.join(",");
+    if (opts?.expansions?.length) query.expansions = opts.expansions.join(",");
+    if (opts?.userFields?.length) query["user.fields"] = opts.userFields.join(",");
+    if (opts?.maxResults) query.max_results = opts.maxResults;
+    if (opts?.paginationToken) query.pagination_token = opts.paginationToken;
+
+    return this.get<TwitterListsResponse>(
+      `/2/users/${encodeURIComponent(userId)}/owned_lists`,
+      { auth: opts?.auth ?? "bearer", query },
+    );
+  }
+
+  async getListTweets(
+    listId: string,
+    opts?: {
+      tweetFields?: string[];
+      expansions?: string[];
+      userFields?: string[];
+      maxResults?: number;
+      paginationToken?: string;
+      auth?: TwitterAuthMode;
+    },
+  ): Promise<TwitterListTweetsResponse> {
+    const query: Record<string, string | number | undefined> = {};
+    if (opts?.tweetFields?.length) query["tweet.fields"] = opts.tweetFields.join(",");
+    if (opts?.expansions?.length) query.expansions = opts.expansions.join(",");
+    if (opts?.userFields?.length) query["user.fields"] = opts.userFields.join(",");
+    if (opts?.maxResults) query.max_results = opts.maxResults;
+    if (opts?.paginationToken) query.pagination_token = opts.paginationToken;
+
+    return this.get<TwitterListTweetsResponse>(
+      `/2/lists/${encodeURIComponent(listId)}/tweets`,
+      { auth: opts?.auth ?? "bearer", query },
+    );
+  }
+
+  async getListMembers(
+    listId: string,
+    opts?: {
+      userFields?: string[];
+      expansions?: string[];
+      tweetFields?: string[];
+      maxResults?: number;
+      paginationToken?: string;
+      auth?: TwitterAuthMode;
+    },
+  ): Promise<TwitterListMembersResponse> {
+    const query: Record<string, string | number | undefined> = {};
+    if (opts?.userFields?.length) query["user.fields"] = opts.userFields.join(",");
+    if (opts?.expansions?.length) query.expansions = opts.expansions.join(",");
+    if (opts?.tweetFields?.length) query["tweet.fields"] = opts.tweetFields.join(",");
+    if (opts?.maxResults) query.max_results = opts.maxResults;
+    if (opts?.paginationToken) query.pagination_token = opts.paginationToken;
+
+    return this.get<TwitterListMembersResponse>(
+      `/2/lists/${encodeURIComponent(listId)}/members`,
+      { auth: opts?.auth ?? "bearer", query },
+    );
+  }
+
+  // --- Delete tweet ---
+
+  async deleteTweet(tweetId: string): Promise<DeleteTweetResult> {
+    this.requireOAuth1Credentials();
+    const url = `${this.baseUrl}/2/tweets/${encodeURIComponent(tweetId)}`;
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+
+    try {
+      const res = await fetch(url, {
+        method: "DELETE",
+        headers: {
+          Authorization: this.buildOAuthHeader("DELETE", url),
+        },
+        signal: controller.signal,
+      });
+
+      if (!res.ok) {
+        const errorBody = await res.text();
+        const retryAfterHeader = res.headers.get("retry-after");
+        const retryHint = retryAfterHeader ? ` (retry-after: ${retryAfterHeader}s)` : "";
+        throw new Error(`X API error ${res.status}${retryHint}: ${errorBody}`);
+      }
+
+      const data = (await res.json()) as { data: { deleted: boolean } };
+      return { deleted: data.data.deleted };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  // --- Media upload (chunked) ---
+
+  /**
+   * Determine MIME type and media_category from file extension.
+   * Returns undefined for unknown extensions (caller should decide how to handle).
+   */
+  private getMediaTypeInfo(filePath: string): { mediaType: string; mediaCategory: string } | undefined {
+    const ext = extname(filePath).toLowerCase().replace(".", "");
+    switch (ext) {
+      case "jpg":
+      case "jpeg":
+        return { mediaType: "image/jpeg", mediaCategory: "tweet_image" };
+      case "png":
+        return { mediaType: "image/png", mediaCategory: "tweet_image" };
+      case "gif":
+        return { mediaType: "image/gif", mediaCategory: "tweet_gif" };
+      case "mp4":
+        return { mediaType: "video/mp4", mediaCategory: "tweet_video" };
+      default:
+        return undefined;
+    }
+  }
+
+  /**
+   * Upload media using the chunked upload protocol:
+   * INIT → APPEND → FINALIZE → (optional) STATUS polling until succeeded.
+   * @param filePath - Absolute path to the media file.
+   * @returns media_id_string from the API.
+   */
+  async uploadMedia(filePath: string): Promise<string> {
+    this.requireOAuth1Credentials();
+
+    // Read file bytes (throws if not found)
+    const fileBytes = readFileSync(filePath);
+    const totalBytes = fileBytes.length;
+
+    const mediaTypeInfo = this.getMediaTypeInfo(filePath);
+    const mediaType = mediaTypeInfo?.mediaType ?? "image/jpeg";
+    const mediaCategory = mediaTypeInfo?.mediaCategory ?? "tweet_image";
+
+    const uploadUrl = `${this.baseUrl}/2/media/upload`;
+
+    // --- INIT ---
+    const initParams = new URLSearchParams({
+      command: "INIT",
+      total_bytes: String(totalBytes),
+      media_type: mediaType,
+      media_category: mediaCategory,
+    });
+
+    const initController = new AbortController();
+    const initTimer = setTimeout(() => initController.abort(), this.timeoutMs);
+    let mediaId: string;
+    try {
+      const initRes = await fetch(uploadUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Authorization: this.buildOAuthHeader("POST", uploadUrl),
+        },
+        body: initParams.toString(),
+        signal: initController.signal,
+      });
+      if (!initRes.ok) {
+        const errorBody = await initRes.text();
+        throw new Error(`X API media upload INIT error ${initRes.status}: ${errorBody}`);
+      }
+      const initData = (await initRes.json()) as { media_id_string: string };
+      mediaId = initData.media_id_string;
+    } finally {
+      clearTimeout(initTimer);
+    }
+
+    // --- APPEND ---
+    const formData = new FormData();
+    formData.append("command", "APPEND");
+    formData.append("media_id", mediaId);
+    formData.append("segment_index", "0");
+    formData.append("media", new Blob([fileBytes], { type: mediaType }));
+
+    const appendController = new AbortController();
+    const appendTimer = setTimeout(() => appendController.abort(), this.timeoutMs);
+    try {
+      const appendRes = await fetch(uploadUrl, {
+        method: "POST",
+        headers: {
+          // OAuth header without body params (multipart body is not signed)
+          Authorization: this.buildOAuthHeader("POST", uploadUrl),
+        },
+        body: formData,
+        signal: appendController.signal,
+      });
+      if (!appendRes.ok) {
+        const errorBody = await appendRes.text();
+        throw new Error(`X API media upload APPEND error ${appendRes.status}: ${errorBody}`);
+      }
+    } finally {
+      clearTimeout(appendTimer);
+    }
+
+    // --- FINALIZE ---
+    const finalizeParams = new URLSearchParams({
+      command: "FINALIZE",
+      media_id: mediaId,
+    });
+
+    const finalizeController = new AbortController();
+    const finalizeTimer = setTimeout(() => finalizeController.abort(), this.timeoutMs);
+    let processingInfo: { state: string; check_after_secs?: number } | undefined;
+    try {
+      const finalizeRes = await fetch(uploadUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Authorization: this.buildOAuthHeader("POST", uploadUrl),
+        },
+        body: finalizeParams.toString(),
+        signal: finalizeController.signal,
+      });
+      if (!finalizeRes.ok) {
+        const errorBody = await finalizeRes.text();
+        throw new Error(`X API media upload FINALIZE error ${finalizeRes.status}: ${errorBody}`);
+      }
+      const finalizeData = (await finalizeRes.json()) as {
+        media_id_string: string;
+        processing_info?: { state: string; check_after_secs?: number };
+      };
+      processingInfo = finalizeData.processing_info;
+    } finally {
+      clearTimeout(finalizeTimer);
+    }
+
+    // --- STATUS polling (only when processing is needed) ---
+    if (processingInfo) {
+      let state = processingInfo.state;
+      let checkAfterSecs = processingInfo.check_after_secs ?? 1;
+
+      while (state === "pending" || state === "in_progress") {
+        await new Promise((resolve) => setTimeout(resolve, checkAfterSecs * 1000));
+
+        const statusUrl = new URL(uploadUrl);
+        statusUrl.searchParams.set("command", "STATUS");
+        statusUrl.searchParams.set("media_id", mediaId);
+
+        const statusController = new AbortController();
+        const statusTimer = setTimeout(() => statusController.abort(), this.timeoutMs);
+        try {
+          const statusRes = await fetch(statusUrl.toString(), {
+            method: "GET",
+            headers: {
+              Authorization: this.buildOAuthHeader("GET", uploadUrl, {
+                command: "STATUS",
+                media_id: mediaId,
+              }),
+            },
+            signal: statusController.signal,
+          });
+          if (!statusRes.ok) {
+            const errorBody = await statusRes.text();
+            throw new Error(`X API media upload STATUS error ${statusRes.status}: ${errorBody}`);
+          }
+          const statusData = (await statusRes.json()) as {
+            processing_info: { state: string; check_after_secs?: number };
+          };
+          state = statusData.processing_info.state;
+          checkAfterSecs = statusData.processing_info.check_after_secs ?? 5;
+        } finally {
+          clearTimeout(statusTimer);
+        }
+      }
+
+      if (state === "failed") {
+        throw new Error(`Media upload processing failed for media_id: ${mediaId}`);
+      }
+    }
+
+    return mediaId;
+  }
+
   // --- Mentions ---
 
   async getMentions(
@@ -946,6 +1323,109 @@ export class TwitterClient {
     });
   }
 
+  // --- Tweets bulk lookup (M1a) ---
+
+  /**
+   * Fetch up to 100 tweets by their IDs in a single request via GET /2/tweets?ids=...
+   * Supports tweet.fields, expansions, user.fields, and media.fields.
+   * Auth defaults to "bearer"; pass auth: "oauth1" for private metrics.
+   */
+  async getTweetsByIds(
+    ids: string[],
+    opts?: {
+      tweetFields?: string[];
+      expansions?: string[];
+      userFields?: string[];
+      mediaFields?: string[];
+      auth?: "bearer" | "oauth1";
+    },
+  ): Promise<TwitterTweetsLookupResponse> {
+    if (!ids || ids.length === 0) {
+      throw new Error("getTweetsByIds: ids must not be empty");
+    }
+    if (ids.length > 100) {
+      throw new Error("getTweetsByIds: maximum 100 ids per request");
+    }
+    const query: Record<string, string | undefined> = {
+      ids: ids.join(","),
+    };
+    if (opts?.tweetFields?.length) query["tweet.fields"] = opts.tweetFields.join(",");
+    if (opts?.expansions?.length) query.expansions = opts.expansions.join(",");
+    if (opts?.userFields?.length) query["user.fields"] = opts.userFields.join(",");
+    if (opts?.mediaFields?.length) query["media.fields"] = opts.mediaFields.join(",");
+
+    return this.get<TwitterTweetsLookupResponse>("/2/tweets", {
+      auth: opts?.auth ?? "bearer",
+      query,
+    });
+  }
+
+  // --- Tweet counts (M2) ---
+
+  /**
+   * Get the count of tweets matching a query in the last 7 days via GET /2/tweets/counts/recent.
+   * Supports granularity: "minute" | "hour" | "day" (default: day).
+   * Auth defaults to "bearer".
+   */
+  async getTweetCountsRecent(
+    query: string,
+    opts?: {
+      granularity?: "minute" | "hour" | "day";
+      startTime?: string;
+      endTime?: string;
+      sinceId?: string;
+      untilId?: string;
+      auth?: "bearer" | "oauth1";
+    },
+  ): Promise<TwitterTweetCountsResponse> {
+    if (!query || !query.trim()) {
+      throw new Error("getTweetCountsRecent: query must not be empty");
+    }
+    const params: Record<string, string | undefined> = { query };
+    if (opts?.granularity) params.granularity = opts.granularity;
+    if (opts?.startTime) params.start_time = opts.startTime;
+    if (opts?.endTime) params.end_time = opts.endTime;
+    if (opts?.sinceId) params.since_id = opts.sinceId;
+    if (opts?.untilId) params.until_id = opts.untilId;
+
+    return this.get<TwitterTweetCountsResponse>("/2/tweets/counts/recent", {
+      auth: opts?.auth ?? "bearer",
+      query: params,
+    });
+  }
+
+  // --- User search (M7) ---
+
+  /**
+   * Search users by query string via GET /2/users/search.
+   * Note: This endpoint may require Basic+ tier access.
+   * TODO: Confirm access tier requirement.
+   */
+  async searchUsers(
+    query: string,
+    opts?: {
+      userFields?: string[];
+      expansions?: string[];
+      maxResults?: number;
+      paginationToken?: string;
+      auth?: "bearer" | "oauth1";
+    },
+  ): Promise<TwitterUserSearchResponse> {
+    if (!query || !query.trim()) {
+      throw new Error("searchUsers: query must not be empty");
+    }
+    const params: Record<string, string | number | undefined> = { query };
+    if (opts?.userFields?.length) params["user.fields"] = opts.userFields.join(",");
+    if (opts?.expansions?.length) params.expansions = opts.expansions.join(",");
+    if (opts?.maxResults) params.max_results = opts.maxResults;
+    if (opts?.paginationToken) params.pagination_token = opts.paginationToken;
+
+    return this.get<TwitterUserSearchResponse>("/2/users/search", {
+      auth: opts?.auth ?? "bearer",
+      query: params,
+    });
+  }
+
   async getConversation(
     tweetIdOrUrl: string,
     opts?: {
@@ -1188,6 +1668,12 @@ export class TwitterClient {
     if (input.quoteTweetId) {
       payload.quote_tweet_id = input.quoteTweetId;
     }
+    if (input.mediaIds && input.mediaIds.length > 0) {
+      payload.media = { media_ids: input.mediaIds };
+    }
+    if (input.poll) {
+      payload.poll = { options: input.poll.options, duration_minutes: input.poll.durationMinutes };
+    }
     return payload;
   }
 
@@ -1230,6 +1716,170 @@ export class TwitterClient {
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  // --- M3: Send Direct Message ---
+
+  /**
+   * POST /2/dm_conversations/with/:participantId/messages
+   * Sends a DM to a user. Requires oauth2-user (default) or oauth1.
+   */
+  async sendDirectMessage(
+    participantId: string,
+    text: string,
+    opts?: {
+      auth?: Extract<TwitterAuthMode, "oauth1" | "oauth2-user">;
+    },
+  ): Promise<SendDirectMessageResult> {
+    const auth = opts?.auth ?? "oauth2-user";
+    const url = `${this.baseUrl}/2/dm_conversations/with/${encodeURIComponent(participantId)}/messages`;
+
+    let authHeader: string;
+    if (auth === "oauth1") {
+      this.requireOAuth1Credentials();
+      authHeader = this.buildOAuthHeader("POST", url);
+    } else {
+      authHeader = `Bearer ${this.requireOAuth2UserToken()}`;
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: authHeader,
+        },
+        body: JSON.stringify({ text }),
+        signal: controller.signal,
+      });
+
+      if (!res.ok) {
+        const errorBody = await res.text();
+        const retryAfterHeader = res.headers.get("retry-after");
+        const retryHint = retryAfterHeader ? ` (retry-after: ${retryAfterHeader}s)` : "";
+        throw new Error(`X API error ${res.status}${retryHint}: ${errorBody}`);
+      }
+
+      const data = (await res.json()) as {
+        data: { dm_conversation_id: string; dm_event_id: string };
+      };
+      return {
+        dm_conversation_id: data.data.dm_conversation_id,
+        dm_event_id: data.data.dm_event_id,
+      };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  // --- M4: Bookmark mutations ---
+
+  /**
+   * POST /2/users/:userId/bookmarks
+   * Creates a bookmark. Requires oauth2-user.
+   */
+  async createBookmark(
+    tweetId: string,
+    opts: { userId: string },
+  ): Promise<BookmarkMutationResult> {
+    const token = this.requireOAuth2UserToken();
+    const url = `${this.baseUrl}/2/users/${encodeURIComponent(opts.userId)}/bookmarks`;
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ tweet_id: tweetId }),
+        signal: controller.signal,
+      });
+
+      if (!res.ok) {
+        const errorBody = await res.text();
+        const retryAfterHeader = res.headers.get("retry-after");
+        const retryHint = retryAfterHeader ? ` (retry-after: ${retryAfterHeader}s)` : "";
+        throw new Error(`X API error ${res.status}${retryHint}: ${errorBody}`);
+      }
+
+      const data = (await res.json()) as { data: { bookmarked: boolean } };
+      return { bookmarked: data.data.bookmarked };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /**
+   * DELETE /2/users/:userId/bookmarks/:tweetId
+   * Removes a bookmark. Requires oauth2-user.
+   */
+  async deleteBookmark(
+    tweetId: string,
+    opts: { userId: string },
+  ): Promise<BookmarkMutationResult> {
+    const token = this.requireOAuth2UserToken();
+    const url = `${this.baseUrl}/2/users/${encodeURIComponent(opts.userId)}/bookmarks/${encodeURIComponent(tweetId)}`;
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+
+    try {
+      const res = await fetch(url, {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        signal: controller.signal,
+      });
+
+      if (!res.ok) {
+        const errorBody = await res.text();
+        const retryAfterHeader = res.headers.get("retry-after");
+        const retryHint = retryAfterHeader ? ` (retry-after: ${retryAfterHeader}s)` : "";
+        throw new Error(`X API error ${res.status}${retryHint}: ${errorBody}`);
+      }
+
+      const data = (await res.json()) as { data: { bookmarked: boolean } };
+      return { bookmarked: data.data.bookmarked };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  // --- M6: Thread posting ---
+
+  /**
+   * Post a thread of tweets. Each tweet after the first replies to the previous one.
+   * @param texts - Array of tweet text strings (one per tweet in the thread)
+   * @returns Array of PostTweetResult in order
+   */
+  async postThread(texts: string[]): Promise<PostTweetResult[]> {
+    if (!texts || texts.length === 0) {
+      throw new Error("postThread: texts array must not be empty");
+    }
+
+    this.requireOAuth1Credentials();
+
+    const results: PostTweetResult[] = [];
+    let previousTweetId: string | undefined;
+
+    for (const text of texts) {
+      const result = await this.postTweet({
+        text,
+        replyTo: previousTweetId,
+      });
+      results.push(result);
+      previousTweetId = result.id;
+    }
+
+    return results;
   }
 
   // --- Profile update (v1.1 account/update_profile) ---
@@ -1571,5 +2221,302 @@ export class TwitterClient {
       ...response,
       data: (response.data ?? []).map((tweet) => this.normalizeTweet(tweet)),
     };
+  }
+
+  // --- L3: Mute / Unmute / Block / Unblock ---
+
+  /**
+   * POST /2/users/:id/muting
+   * Mutes a user. Requires oauth2-user (default) or oauth1.
+   */
+  async muteUser(
+    targetUserId: string,
+    opts: {
+      userId: string;
+      auth?: Extract<TwitterAuthMode, "oauth1" | "oauth2-user">;
+    },
+  ): Promise<MuteBlockResult> {
+    const auth = opts.auth ?? "oauth2-user";
+    const url = `${this.baseUrl}/2/users/${encodeURIComponent(opts.userId)}/muting`;
+
+    let authHeader: string;
+    if (auth === "oauth1") {
+      this.requireOAuth1Credentials();
+      authHeader = this.buildOAuthHeader("POST", url);
+    } else {
+      authHeader = `Bearer ${this.requireOAuth2UserToken()}`;
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: authHeader,
+        },
+        body: JSON.stringify({ target_user_id: targetUserId }),
+        signal: controller.signal,
+      });
+
+      if (!res.ok) {
+        const errorBody = await res.text();
+        const retryAfterHeader = res.headers.get("retry-after");
+        const retryHint = retryAfterHeader ? ` (retry-after: ${retryAfterHeader}s)` : "";
+        throw new Error(`X API error ${res.status}${retryHint}: ${errorBody}`);
+      }
+
+      const data = (await res.json()) as { data: { muting: boolean } };
+      return { muting: data.data.muting };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /**
+   * DELETE /2/users/:source_id/muting/:target_id
+   * Unmutes a user. Requires oauth2-user (default) or oauth1.
+   */
+  async unmuteUser(
+    targetUserId: string,
+    opts: {
+      userId: string;
+      auth?: Extract<TwitterAuthMode, "oauth1" | "oauth2-user">;
+    },
+  ): Promise<MuteBlockResult> {
+    const auth = opts.auth ?? "oauth2-user";
+    const url = `${this.baseUrl}/2/users/${encodeURIComponent(opts.userId)}/muting/${encodeURIComponent(targetUserId)}`;
+
+    let authHeader: string;
+    if (auth === "oauth1") {
+      this.requireOAuth1Credentials();
+      authHeader = this.buildOAuthHeader("DELETE", url);
+    } else {
+      authHeader = `Bearer ${this.requireOAuth2UserToken()}`;
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+
+    try {
+      const res = await fetch(url, {
+        method: "DELETE",
+        headers: {
+          Authorization: authHeader,
+        },
+        signal: controller.signal,
+      });
+
+      if (!res.ok) {
+        const errorBody = await res.text();
+        const retryAfterHeader = res.headers.get("retry-after");
+        const retryHint = retryAfterHeader ? ` (retry-after: ${retryAfterHeader}s)` : "";
+        throw new Error(`X API error ${res.status}${retryHint}: ${errorBody}`);
+      }
+
+      const data = (await res.json()) as { data: { muting: boolean } };
+      return { muting: data.data.muting };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /**
+   * POST /2/users/:id/blocking
+   * Blocks a user. Requires oauth2-user (default) or oauth1.
+   */
+  async blockUser(
+    targetUserId: string,
+    opts: {
+      userId: string;
+      auth?: Extract<TwitterAuthMode, "oauth1" | "oauth2-user">;
+    },
+  ): Promise<MuteBlockResult> {
+    const auth = opts.auth ?? "oauth2-user";
+    const url = `${this.baseUrl}/2/users/${encodeURIComponent(opts.userId)}/blocking`;
+
+    let authHeader: string;
+    if (auth === "oauth1") {
+      this.requireOAuth1Credentials();
+      authHeader = this.buildOAuthHeader("POST", url);
+    } else {
+      authHeader = `Bearer ${this.requireOAuth2UserToken()}`;
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: authHeader,
+        },
+        body: JSON.stringify({ target_user_id: targetUserId }),
+        signal: controller.signal,
+      });
+
+      if (!res.ok) {
+        const errorBody = await res.text();
+        const retryAfterHeader = res.headers.get("retry-after");
+        const retryHint = retryAfterHeader ? ` (retry-after: ${retryAfterHeader}s)` : "";
+        throw new Error(`X API error ${res.status}${retryHint}: ${errorBody}`);
+      }
+
+      const data = (await res.json()) as { data: { blocking: boolean } };
+      return { blocking: data.data.blocking };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /**
+   * DELETE /2/users/:source_id/blocking/:target_id
+   * Unblocks a user. Requires oauth2-user (default) or oauth1.
+   */
+  async unblockUser(
+    targetUserId: string,
+    opts: {
+      userId: string;
+      auth?: Extract<TwitterAuthMode, "oauth1" | "oauth2-user">;
+    },
+  ): Promise<MuteBlockResult> {
+    const auth = opts.auth ?? "oauth2-user";
+    const url = `${this.baseUrl}/2/users/${encodeURIComponent(opts.userId)}/blocking/${encodeURIComponent(targetUserId)}`;
+
+    let authHeader: string;
+    if (auth === "oauth1") {
+      this.requireOAuth1Credentials();
+      authHeader = this.buildOAuthHeader("DELETE", url);
+    } else {
+      authHeader = `Bearer ${this.requireOAuth2UserToken()}`;
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+
+    try {
+      const res = await fetch(url, {
+        method: "DELETE",
+        headers: {
+          Authorization: authHeader,
+        },
+        signal: controller.signal,
+      });
+
+      if (!res.ok) {
+        const errorBody = await res.text();
+        const retryAfterHeader = res.headers.get("retry-after");
+        const retryHint = retryAfterHeader ? ` (retry-after: ${retryAfterHeader}s)` : "";
+        throw new Error(`X API error ${res.status}${retryHint}: ${errorBody}`);
+      }
+
+      const data = (await res.json()) as { data: { blocking: boolean } };
+      return { blocking: data.data.blocking };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  // --- L4: searchAll (全期間検索) ---
+  // NOTE: This endpoint requires Academic Research / Pro+ tier.
+  //       Lower tiers receive HTTP 403. See X API docs for tier details.
+
+  /**
+   * GET /2/tweets/search/all
+   * Search all tweets (full archive). Requires Pro+ tier — returns 403 on lower tiers.
+   * Auth defaults to "bearer".
+   */
+  async searchAll(
+    query: string,
+    opts?: {
+      maxResults?: number;
+      tweetFields?: string[];
+      expansions?: string[];
+      userFields?: string[];
+      mediaFields?: string[];
+      paginationToken?: string;
+      startTime?: string;
+      endTime?: string;
+      sinceId?: string;
+      untilId?: string;
+      auth?: "bearer" | "oauth1";
+    },
+  ): Promise<TwitterSearchAllResponse> {
+    if (!query || !query.trim()) {
+      throw new Error("searchAll: query must not be empty");
+    }
+    const params: Record<string, string | number | undefined> = { query };
+    if (opts?.tweetFields?.length) params["tweet.fields"] = opts.tweetFields.join(",");
+    if (opts?.expansions?.length) params.expansions = opts.expansions.join(",");
+    if (opts?.userFields?.length) params["user.fields"] = opts.userFields.join(",");
+    if (opts?.mediaFields?.length) params["media.fields"] = opts.mediaFields.join(",");
+    if (opts?.maxResults) params.max_results = opts.maxResults;
+    if (opts?.paginationToken) params.next_token = opts.paginationToken;
+    if (opts?.startTime) params.start_time = opts.startTime;
+    if (opts?.endTime) params.end_time = opts.endTime;
+    if (opts?.sinceId) params.since_id = opts.sinceId;
+    if (opts?.untilId) params.until_id = opts.untilId;
+
+    return this.get<TwitterSearchAllResponse>("/2/tweets/search/all", {
+      auth: opts?.auth ?? "bearer",
+      query: params,
+    });
+  }
+
+  // --- L7: getTrends / searchSpaces ---
+  // NOTE: These endpoints have fluid specs and may have tier restrictions.
+  //       Check X API docs for the latest endpoint spec and access requirements.
+
+  /**
+   * GET /2/trends/by/woeid/:woeid
+   * Get trending topics for a given WOEID (e.g. 23424856 = Japan).
+   * NOTE: Endpoint spec is subject to change; tier restrictions may apply.
+   * Auth defaults to "bearer".
+   */
+  async getTrends(
+    woeid: number,
+    opts?: {
+      auth?: "bearer" | "oauth1";
+    },
+  ): Promise<TwitterTrendsResponse> {
+    return this.get<TwitterTrendsResponse>(
+      `/2/trends/by/woeid/${encodeURIComponent(String(woeid))}`,
+      { auth: opts?.auth ?? "bearer" },
+    );
+  }
+
+  /**
+   * GET /2/spaces/search
+   * Search for Spaces by keyword.
+   * NOTE: Endpoint spec is subject to change; tier restrictions may apply.
+   * Auth defaults to "bearer".
+   */
+  async searchSpaces(
+    query: string,
+    opts?: {
+      spaceFields?: string[];
+      expansions?: string[];
+      userFields?: string[];
+      maxResults?: number;
+      auth?: "bearer" | "oauth1";
+    },
+  ): Promise<TwitterSpacesSearchResponse> {
+    if (!query || !query.trim()) {
+      throw new Error("searchSpaces: query must not be empty");
+    }
+    const params: Record<string, string | number | undefined> = { query };
+    if (opts?.spaceFields?.length) params["space.fields"] = opts.spaceFields.join(",");
+    if (opts?.expansions?.length) params.expansions = opts.expansions.join(",");
+    if (opts?.userFields?.length) params["user.fields"] = opts.userFields.join(",");
+    if (opts?.maxResults) params.max_results = opts.maxResults;
+
+    return this.get<TwitterSpacesSearchResponse>("/2/spaces/search", {
+      auth: opts?.auth ?? "bearer",
+      query: params,
+    });
   }
 }

@@ -176,3 +176,122 @@ export interface TwitterDmEventsResponse {
   data?: TwitterDmEvent[];
   meta?: TwitterMeta;
 }
+
+// --- Lists ---
+
+export interface TwitterList {
+  id: string;
+  name: string;
+  description?: string;
+  owner_id?: string;
+  private?: boolean;
+  follower_count?: number;
+  member_count?: number;
+  created_at?: string;
+  [key: string]: unknown;
+}
+
+export interface TwitterListsResponse {
+  data: TwitterList[];
+  meta: TwitterMeta;
+}
+
+export interface TwitterListTweetsResponse {
+  data: TwitterTweet[];
+  includes?: TwitterIncludes;
+  meta: TwitterMeta;
+}
+
+export interface TwitterListMembersResponse {
+  data: TwitterUser[];
+  includes?: TwitterIncludes;
+  meta: TwitterMeta;
+}
+
+// --- Delete tweet ---
+
+export interface DeleteTweetResult {
+  deleted: boolean;
+}
+
+// --- Tweet counts (M2) ---
+
+export interface TwitterTweetCount {
+  start: string;
+  end: string;
+  tweet_count: number;
+}
+
+export interface TwitterTweetCountsResponse {
+  data: TwitterTweetCount[];
+  meta: {
+    total_tweet_count: number;
+    newest_id?: string;
+    oldest_id?: string;
+    next_token?: string;
+  };
+}
+
+// --- User search (M7) ---
+
+export interface TwitterUserSearchResponse {
+  data: TwitterUser[];
+  meta: TwitterMeta;
+}
+
+// --- Tweets lookup by ids (M1a) ---
+
+export interface TwitterTweetsLookupResponse {
+  data: TwitterTweet[];
+  includes?: TwitterIncludes;
+  meta?: TwitterMeta;
+}
+
+// --- Mute / Block (L3) ---
+
+export interface MuteBlockResult {
+  /** true when the muting/blocking relationship was created */
+  muting?: boolean;
+  /** true when the blocking relationship was created */
+  blocking?: boolean;
+}
+
+// --- Search All (L4) ---
+// NOTE: Requires Academic Research / Pro+ tier. Returns 403 on lower tiers.
+
+export interface TwitterSearchAllResponse {
+  data?: TwitterTweet[];
+  includes?: TwitterIncludes;
+  meta: TwitterMeta & { newest_id?: string; oldest_id?: string };
+}
+
+// --- Trends (L7) ---
+// NOTE: Endpoint spec is subject to change; tier restrictions may apply.
+
+export interface TwitterTrend {
+  trend_name: string;
+  tweet_count?: number;
+  [key: string]: unknown;
+}
+
+export interface TwitterTrendsResponse {
+  data?: TwitterTrend[];
+  [key: string]: unknown;
+}
+
+// --- Spaces (L7) ---
+// NOTE: Endpoint spec is subject to change; tier restrictions may apply.
+
+export interface TwitterSpace {
+  id: string;
+  state?: string;
+  title?: string;
+  created_at?: string;
+  host_ids?: string[];
+  [key: string]: unknown;
+}
+
+export interface TwitterSpacesSearchResponse {
+  data?: TwitterSpace[];
+  meta?: TwitterMeta;
+}

@@ -1,3 +1,5 @@
+**English** | [日本語](CONTRIBUTING.ja.md)
+
 # Contributing to xai-cli
 
 Thank you for your interest in contributing to xai-cli! This document provides guidelines and
