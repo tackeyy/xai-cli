@@ -1446,6 +1446,65 @@ describe("TwitterClient.getMentionsCount", () => {
     expect(result.data).toHaveLength(2);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
+
+  // High 1: new fields must be forwarded to getMentions internally
+  it("passes expansions to the underlying getMentions call", async () => {
+    const page1 = { data: [{ id: "m1", text: "a" }], meta: { result_count: 1 } };
+    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify(page1), { status: 200 }));
+
+    const tc = makeBearerClient();
+    await tc.getMentionsCount("123", { count: 1, expansions: ["author_id"] });
+
+    const url = String(fetchSpy.mock.calls[0][0]);
+    expect(url).toContain("expansions=author_id");
+  });
+
+  it("passes userFields to the underlying getMentions call", async () => {
+    const page1 = { data: [{ id: "m1", text: "a" }], meta: { result_count: 1 } };
+    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify(page1), { status: 200 }));
+
+    const tc = makeBearerClient();
+    await tc.getMentionsCount("123", { count: 1, userFields: ["name", "username"] });
+
+    const url = String(fetchSpy.mock.calls[0][0]);
+    expect(url).toContain("user.fields=");
+    expect(decodeURIComponent(url)).toContain("name");
+  });
+
+  it("passes mediaFields to the underlying getMentions call", async () => {
+    const page1 = { data: [{ id: "m1", text: "a" }], meta: { result_count: 1 } };
+    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify(page1), { status: 200 }));
+
+    const tc = makeBearerClient();
+    await tc.getMentionsCount("123", { count: 1, mediaFields: ["url", "type"] });
+
+    const url = String(fetchSpy.mock.calls[0][0]);
+    expect(url).toContain("media.fields=");
+  });
+
+  it("passes startTime and endTime to the underlying getMentions call", async () => {
+    const page1 = { data: [{ id: "m1", text: "a" }], meta: { result_count: 1 } };
+    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify(page1), { status: 200 }));
+
+    const tc = makeBearerClient();
+    await tc.getMentionsCount("123", { count: 1, startTime: "2026-01-01T00:00:00Z", endTime: "2026-12-31T23:59:59Z" });
+
+    const url = String(fetchSpy.mock.calls[0][0]);
+    expect(url).toContain("start_time=");
+    expect(url).toContain("end_time=");
+  });
+
+  it("passes sinceId and untilId to the underlying getMentions call", async () => {
+    const page1 = { data: [{ id: "m1", text: "a" }], meta: { result_count: 1 } };
+    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify(page1), { status: 200 }));
+
+    const tc = makeBearerClient();
+    await tc.getMentionsCount("123", { count: 1, sinceId: "100", untilId: "200" });
+
+    const url = String(fetchSpy.mock.calls[0][0]);
+    expect(url).toContain("since_id=100");
+    expect(url).toContain("until_id=200");
+  });
 });
 
 describe("TwitterClient.getDmEvents", () => {

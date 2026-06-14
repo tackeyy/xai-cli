@@ -989,6 +989,13 @@ export class TwitterClient {
     opts: {
       count: number;
       tweetFields?: string[];
+      expansions?: string[];
+      userFields?: string[];
+      mediaFields?: string[];
+      startTime?: string;
+      endTime?: string;
+      sinceId?: string;
+      untilId?: string;
       maxResults?: number;
       auth?: "bearer" | "oauth1";
     },
@@ -1005,6 +1012,13 @@ export class TwitterClient {
       const pageSize = Math.min(opts.maxResults ?? 100, remaining);
       const res = await this.getMentions(userId, {
         tweetFields: opts.tweetFields,
+        expansions: opts.expansions,
+        userFields: opts.userFields,
+        mediaFields: opts.mediaFields,
+        startTime: opts.startTime,
+        endTime: opts.endTime,
+        sinceId: opts.sinceId,
+        untilId: opts.untilId,
         maxResults: pageSize,
         paginationToken,
         auth: opts.auth,

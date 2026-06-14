@@ -71,6 +71,12 @@ export class XaiClient {
    * XAI_DEBUG_DUMP_RESPONSE が設定されている場合、生レスポンスを
    * ~/.cache/xai-cli/last-response.json に書き出す（デバッグ用）。
    * output[].type / content[].type の実採取に使う。失敗は本処理に影響させない。
+   *
+   * 注意事項:
+   * - writeFileSync を使った同期 I/O のため、ループ等の高頻度呼び出し時は
+   *   XAI_DEBUG_DUMP_RESPONSE を設定しないこと（パフォーマンス劣化の原因になる）。
+   * - ファイルパスは固定 (last-response.json) のため、並行実行時は後勝ちになり
+   *   レース状態の保証はない。デバッグ目的のスナップショット取得にのみ使うこと。
    */
   private maybeDumpResponse(response: XaiResponse): void {
     if (!process.env.XAI_DEBUG_DUMP_RESPONSE) return;
