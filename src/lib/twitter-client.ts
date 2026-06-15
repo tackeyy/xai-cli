@@ -790,12 +790,20 @@ export class TwitterClient {
   }
 
   /**
-   * Upload media using the chunked upload protocol:
-   * INIT → APPEND → FINALIZE → (optional) STATUS polling until succeeded.
+   * Upload media using the X API v2 **dedicated** chunked upload endpoints:
+   *   POST /2/media/upload/initialize
+   *   → POST /2/media/upload/{id}/append
+   *   → POST /2/media/upload/{id}/finalize
+   *   → (optional) STATUS polling until succeeded.
+   *
+   * The legacy command-based endpoint (POST /2/media/upload?command=INIT|APPEND|FINALIZE)
+   * is deprecated as of 2026; this implementation targets the dedicated endpoints.
    * @param filePath - Absolute path to the media file.
-   * @returns media_id_string from the API.
+   * @param opts.altText - Optional alt text; when provided, POST /2/media/metadata is
+   *   called after the upload completes (see {@link updateMediaMetadata}).
+   * @returns media id string from the API.
    */
-  async uploadMedia(filePath: string): Promise<string> {
+  async uploadMedia(filePath: string, opts?: { altText?: string }): Promise<string> {
     this.requireOAuth1Credentials();
 
     // Read file bytes (throws if not found)
@@ -806,13 +814,11 @@ export class TwitterClient {
     const mediaType = mediaTypeInfo?.mediaType ?? "image/jpeg";
     const mediaCategory = mediaTypeInfo?.mediaCategory ?? "tweet_image";
 
-    const uploadUrl = `${this.baseUrl}/2/media/upload`;
-
-    // --- INIT ---
-    const initParams = new URLSearchParams({
-      command: "INIT",
-      total_bytes: String(totalBytes),
+    // --- INITIALIZE: POST /2/media/upload/initialize (JSON body) ---
+    const initializeUrl = `${this.baseUrl}/2/media/upload/initialize`;
+    const initBody = JSON.stringify({
       media_type: mediaType,
+      total_bytes: totalBytes,
       media_category: mediaCategory,
     });
 
@@ -820,40 +826,48 @@ export class TwitterClient {
     const initTimer = setTimeout(() => initController.abort(), this.timeoutMs);
     let mediaId: string;
     try {
-      const initRes = await fetch(uploadUrl, {
+      const initRes = await fetch(initializeUrl, {
         method: "POST",
         headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-          Authorization: this.buildOAuthHeader("POST", uploadUrl),
+          "Content-Type": "application/json",
+          Authorization: this.buildOAuthHeader("POST", initializeUrl),
         },
-        body: initParams.toString(),
+        body: initBody,
         signal: initController.signal,
       });
       if (!initRes.ok) {
         const errorBody = await initRes.text();
-        throw new Error(`X API media upload INIT error ${initRes.status}: ${errorBody}`);
+        throw new Error(`X API media upload INITIALIZE error ${initRes.status}: ${errorBody}`);
       }
-      const initData = (await initRes.json()) as { media_id_string: string };
-      mediaId = initData.media_id_string;
+      // Dedicated endpoint returns { data: { id } }; tolerate legacy media_id_string too.
+      const initData = (await initRes.json()) as {
+        data?: { id?: string };
+        id?: string;
+        media_id_string?: string;
+      };
+      const resolvedId = initData.data?.id ?? initData.id ?? initData.media_id_string;
+      if (!resolvedId) {
+        throw new Error("X API media upload INITIALIZE error: response missing media id");
+      }
+      mediaId = resolvedId;
     } finally {
       clearTimeout(initTimer);
     }
 
-    // --- APPEND ---
+    // --- APPEND: POST /2/media/upload/{id}/append (multipart, media_id in path) ---
+    const appendUrl = `${this.baseUrl}/2/media/upload/${encodeURIComponent(mediaId)}/append`;
     const formData = new FormData();
-    formData.append("command", "APPEND");
-    formData.append("media_id", mediaId);
     formData.append("segment_index", "0");
     formData.append("media", new Blob([fileBytes], { type: mediaType }));
 
     const appendController = new AbortController();
     const appendTimer = setTimeout(() => appendController.abort(), this.timeoutMs);
     try {
-      const appendRes = await fetch(uploadUrl, {
+      const appendRes = await fetch(appendUrl, {
         method: "POST",
         headers: {
           // OAuth header without body params (multipart body is not signed)
-          Authorization: this.buildOAuthHeader("POST", uploadUrl),
+          Authorization: this.buildOAuthHeader("POST", appendUrl),
         },
         body: formData,
         signal: appendController.signal,
@@ -866,39 +880,37 @@ export class TwitterClient {
       clearTimeout(appendTimer);
     }
 
-    // --- FINALIZE ---
-    const finalizeParams = new URLSearchParams({
-      command: "FINALIZE",
-      media_id: mediaId,
-    });
-
+    // --- FINALIZE: POST /2/media/upload/{id}/finalize (media_id in path, no body) ---
+    const finalizeUrl = `${this.baseUrl}/2/media/upload/${encodeURIComponent(mediaId)}/finalize`;
     const finalizeController = new AbortController();
     const finalizeTimer = setTimeout(() => finalizeController.abort(), this.timeoutMs);
     let processingInfo: { state: string; check_after_secs?: number } | undefined;
     try {
-      const finalizeRes = await fetch(uploadUrl, {
+      const finalizeRes = await fetch(finalizeUrl, {
         method: "POST",
         headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-          Authorization: this.buildOAuthHeader("POST", uploadUrl),
+          Authorization: this.buildOAuthHeader("POST", finalizeUrl),
         },
-        body: finalizeParams.toString(),
         signal: finalizeController.signal,
       });
       if (!finalizeRes.ok) {
         const errorBody = await finalizeRes.text();
         throw new Error(`X API media upload FINALIZE error ${finalizeRes.status}: ${errorBody}`);
       }
+      // Dedicated endpoint wraps processing_info in { data }; tolerate the legacy top-level shape.
       const finalizeData = (await finalizeRes.json()) as {
-        media_id_string: string;
+        data?: { id?: string; processing_info?: { state: string; check_after_secs?: number } };
+        media_id_string?: string;
         processing_info?: { state: string; check_after_secs?: number };
       };
-      processingInfo = finalizeData.processing_info;
+      processingInfo = finalizeData.data?.processing_info ?? finalizeData.processing_info;
     } finally {
       clearTimeout(finalizeTimer);
     }
 
-    // --- STATUS polling (only when processing is needed) ---
+    // --- STATUS polling (only for async processing, e.g. video/gif; images skip this) ---
+    // No dedicated GET status endpoint is published, so the documented
+    // STATUS command on /2/media/upload is used for polling.
     if (processingInfo) {
       let state = processingInfo.state;
       let checkAfterSecs = processingInfo.check_after_secs ?? 1;
@@ -906,7 +918,8 @@ export class TwitterClient {
       while (state === "pending" || state === "in_progress") {
         await new Promise((resolve) => setTimeout(resolve, checkAfterSecs * 1000));
 
-        const statusUrl = new URL(uploadUrl);
+        const statusBaseUrl = `${this.baseUrl}/2/media/upload`;
+        const statusUrl = new URL(statusBaseUrl);
         statusUrl.searchParams.set("command", "STATUS");
         statusUrl.searchParams.set("media_id", mediaId);
 
@@ -916,7 +929,7 @@ export class TwitterClient {
           const statusRes = await fetch(statusUrl.toString(), {
             method: "GET",
             headers: {
-              Authorization: this.buildOAuthHeader("GET", uploadUrl, {
+              Authorization: this.buildOAuthHeader("GET", statusBaseUrl, {
                 command: "STATUS",
                 media_id: mediaId,
               }),
@@ -928,10 +941,12 @@ export class TwitterClient {
             throw new Error(`X API media upload STATUS error ${statusRes.status}: ${errorBody}`);
           }
           const statusData = (await statusRes.json()) as {
-            processing_info: { state: string; check_after_secs?: number };
+            data?: { processing_info?: { state: string; check_after_secs?: number } };
+            processing_info?: { state: string; check_after_secs?: number };
           };
-          state = statusData.processing_info.state;
-          checkAfterSecs = statusData.processing_info.check_after_secs ?? 5;
+          const info = statusData.data?.processing_info ?? statusData.processing_info;
+          state = info?.state ?? "succeeded";
+          checkAfterSecs = info?.check_after_secs ?? 5;
         } finally {
           clearTimeout(statusTimer);
         }
@@ -942,7 +957,47 @@ export class TwitterClient {
       }
     }
 
+    // --- Metadata (alt text) ---
+    if (opts?.altText) {
+      await this.updateMediaMetadata(mediaId, opts.altText);
+    }
+
     return mediaId;
+  }
+
+  /**
+   * Attach alt text metadata to an uploaded media via POST /2/media/metadata.
+   * Improves accessibility by setting the image's alternative text.
+   * @param mediaId - media id returned by {@link uploadMedia}.
+   * @param altText - alternative text (X limits this to <= 1000 characters).
+   */
+  async updateMediaMetadata(mediaId: string, altText: string): Promise<void> {
+    this.requireOAuth1Credentials();
+    const url = `${this.baseUrl}/2/media/metadata`;
+    const body = JSON.stringify({
+      id: mediaId,
+      metadata: { alt_text: { text: altText } },
+    });
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: this.buildOAuthHeader("POST", url),
+        },
+        body,
+        signal: controller.signal,
+      });
+      if (!res.ok) {
+        const errorBody = await res.text();
+        throw new Error(`X API media metadata error ${res.status}: ${errorBody}`);
+      }
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   // --- Mentions ---

@@ -2405,18 +2405,19 @@ describe("TwitterClient.uploadMedia", () => {
     vi.restoreAllMocks();
   });
 
-  // Helpers to create mock INIT / FINALIZE responses
+  // Helpers to create mock INITIALIZE / FINALIZE responses (dedicated v2 endpoints
+  // wrap payloads under `data`).
   function mockInitResponse(mediaId = "media_111") {
     return new Response(
-      JSON.stringify({ media_id_string: mediaId, expires_after_secs: 86400 }),
+      JSON.stringify({ data: { id: mediaId, expires_after_secs: 86400 } }),
       { status: 200, headers: { "Content-Type": "application/json" } },
     );
   }
 
   function mockFinalizeResponse(mediaId = "media_111", processingInfo?: { state: string; check_after_secs?: number; progress_percent?: number }) {
-    const body: Record<string, unknown> = { media_id_string: mediaId, size: 1024 };
-    if (processingInfo) body.processing_info = processingInfo;
-    return new Response(JSON.stringify(body), {
+    const data: Record<string, unknown> = { id: mediaId, size: 1024 };
+    if (processingInfo) data.processing_info = processingInfo;
+    return new Response(JSON.stringify({ data }), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     });
@@ -2425,14 +2426,16 @@ describe("TwitterClient.uploadMedia", () => {
   function mockStatusResponse(mediaId: string, state: string, checkAfterSecs = 1) {
     return new Response(
       JSON.stringify({
-        media_id_string: mediaId,
-        processing_info: { state, check_after_secs: checkAfterSecs, progress_percent: 50 },
+        data: {
+          id: mediaId,
+          processing_info: { state, check_after_secs: checkAfterSecs, progress_percent: 50 },
+        },
       }),
       { status: 200, headers: { "Content-Type": "application/json" } },
     );
   }
 
-  it("sends INIT, APPEND, FINALIZE in order and returns media_id_string", async () => {
+  it("sends INITIALIZE, APPEND, FINALIZE to dedicated endpoints and returns media id", async () => {
     // We need a real temp file for this test
     const { writeFileSync, unlinkSync } = await import("node:fs");
     const { tmpdir } = await import("node:os");
@@ -2441,7 +2444,7 @@ describe("TwitterClient.uploadMedia", () => {
     writeFileSync(tmp, Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x01])); // small JPEG
 
     fetchSpy
-      .mockResolvedValueOnce(mockInitResponse("media_111"))  // INIT
+      .mockResolvedValueOnce(mockInitResponse("media_111"))  // INITIALIZE
       .mockResolvedValueOnce(new Response(JSON.stringify({}), { status: 200 })) // APPEND
       .mockResolvedValueOnce(mockFinalizeResponse("media_111")); // FINALIZE
 
@@ -2452,27 +2455,27 @@ describe("TwitterClient.uploadMedia", () => {
 
       expect(fetchSpy).toHaveBeenCalledTimes(3);
 
-      // INIT: command=INIT
+      // INITIALIZE: POST /2/media/upload/initialize with JSON body (no command param)
       const initCall = fetchSpy.mock.calls[0];
-      expect(String(initCall[0])).toContain("/2/media/upload");
-      const initBody = new URLSearchParams(String(initCall[1]?.body));
-      expect(initBody.get("command")).toBe("INIT");
-      expect(initBody.get("media_type")).toBe("image/jpeg");
-      expect(initBody.get("media_category")).toBe("tweet_image");
-      expect(Number(initBody.get("total_bytes"))).toBeGreaterThan(0);
+      expect(String(initCall[0])).toContain("/2/media/upload/initialize");
+      const initHeaders = initCall[1]?.headers as Record<string, string>;
+      expect(initHeaders["Content-Type"]).toBe("application/json");
+      const initBody = JSON.parse(String(initCall[1]?.body));
+      expect(initBody.command).toBeUndefined();
+      expect(initBody.media_type).toBe("image/jpeg");
+      expect(initBody.media_category).toBe("tweet_image");
+      expect(initBody.total_bytes).toBeGreaterThan(0);
 
-      // APPEND: command=APPEND with multipart
+      // APPEND: POST /2/media/upload/{id}/append with multipart, media_id in path
       const appendCall = fetchSpy.mock.calls[1];
-      expect(String(appendCall[0])).toContain("/2/media/upload");
+      expect(String(appendCall[0])).toContain("/2/media/upload/media_111/append");
       const appendHeaders = appendCall[1]?.headers as Record<string, string>;
       expect(appendHeaders["Authorization"]).toMatch(/^OAuth /);
 
-      // FINALIZE: command=FINALIZE
+      // FINALIZE: POST /2/media/upload/{id}/finalize, media_id in path (no command body)
       const finalizeCall = fetchSpy.mock.calls[2];
-      expect(String(finalizeCall[0])).toContain("/2/media/upload");
-      const finalizeBody = new URLSearchParams(String(finalizeCall[1]?.body));
-      expect(finalizeBody.get("command")).toBe("FINALIZE");
-      expect(finalizeBody.get("media_id")).toBe("media_111");
+      expect(String(finalizeCall[0])).toContain("/2/media/upload/media_111/finalize");
+      expect(finalizeCall[1]?.body).toBeUndefined();
     } finally {
       unlinkSync(tmp);
     }
@@ -2556,9 +2559,9 @@ describe("TwitterClient.uploadMedia", () => {
     try {
       const tc = makeClient();
       await tc.uploadMedia(tmp);
-      const initBody = new URLSearchParams(String(fetchSpy.mock.calls[0][1]?.body));
-      expect(initBody.get("media_type")).toBe("image/png");
-      expect(initBody.get("media_category")).toBe("tweet_image");
+      const initBody = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
+      expect(initBody.media_type).toBe("image/png");
+      expect(initBody.media_category).toBe("tweet_image");
     } finally {
       unlinkSync(tmp);
     }
@@ -2579,9 +2582,9 @@ describe("TwitterClient.uploadMedia", () => {
     try {
       const tc = makeClient();
       await tc.uploadMedia(tmp);
-      const initBody = new URLSearchParams(String(fetchSpy.mock.calls[0][1]?.body));
-      expect(initBody.get("media_type")).toBe("image/gif");
-      expect(initBody.get("media_category")).toBe("tweet_gif");
+      const initBody = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
+      expect(initBody.media_type).toBe("image/gif");
+      expect(initBody.media_category).toBe("tweet_gif");
     } finally {
       unlinkSync(tmp);
     }
@@ -2602,9 +2605,9 @@ describe("TwitterClient.uploadMedia", () => {
     try {
       const tc = makeClient();
       await tc.uploadMedia(tmp);
-      const initBody = new URLSearchParams(String(fetchSpy.mock.calls[0][1]?.body));
-      expect(initBody.get("media_type")).toBe("video/mp4");
-      expect(initBody.get("media_category")).toBe("tweet_video");
+      const initBody = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
+      expect(initBody.media_type).toBe("video/mp4");
+      expect(initBody.media_category).toBe("tweet_video");
     } finally {
       unlinkSync(tmp);
     }
@@ -2613,6 +2616,104 @@ describe("TwitterClient.uploadMedia", () => {
   it("requires OAuth1 credentials", async () => {
     const tc = makeBearerClient();
     await expect(tc.uploadMedia("/tmp/test.jpg")).rejects.toThrow(/OAuth 1.0a credentials/);
+  });
+
+  it("calls POST /2/media/metadata with alt_text when altText option is given", async () => {
+    const { writeFileSync, unlinkSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const tmp = join(tmpdir(), "test-upload-alt.jpg");
+    writeFileSync(tmp, Buffer.from([0xff, 0xd8, 0xff, 0xe0]));
+
+    fetchSpy
+      .mockResolvedValueOnce(mockInitResponse("media_alt"))  // INITIALIZE
+      .mockResolvedValueOnce(new Response(JSON.stringify({}), { status: 200 })) // APPEND
+      .mockResolvedValueOnce(mockFinalizeResponse("media_alt")) // FINALIZE
+      .mockResolvedValueOnce(new Response(JSON.stringify({}), { status: 200 })); // METADATA
+
+    try {
+      const tc = makeClient();
+      const result = await tc.uploadMedia(tmp, { altText: "a red bird" });
+      expect(result).toBe("media_alt");
+
+      // 4th call should be the metadata endpoint
+      expect(fetchSpy).toHaveBeenCalledTimes(4);
+      const metaCall = fetchSpy.mock.calls[3];
+      expect(String(metaCall[0])).toContain("/2/media/metadata");
+      const metaBody = JSON.parse(String(metaCall[1]?.body));
+      expect(metaBody.id).toBe("media_alt");
+      expect(metaBody.metadata.alt_text.text).toBe("a red bird");
+    } finally {
+      unlinkSync(tmp);
+    }
+  });
+
+  it("does NOT call metadata endpoint when altText is omitted", async () => {
+    const { writeFileSync, unlinkSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const tmp = join(tmpdir(), "test-upload-noalt.jpg");
+    writeFileSync(tmp, Buffer.from([0xff, 0xd8, 0xff, 0xe0]));
+
+    fetchSpy
+      .mockResolvedValueOnce(mockInitResponse("media_noalt"))
+      .mockResolvedValueOnce(new Response(JSON.stringify({}), { status: 200 }))
+      .mockResolvedValueOnce(mockFinalizeResponse("media_noalt"));
+
+    try {
+      const tc = makeClient();
+      await tc.uploadMedia(tmp);
+      // Only INITIALIZE + APPEND + FINALIZE — no metadata call.
+      expect(fetchSpy).toHaveBeenCalledTimes(3);
+      for (const call of fetchSpy.mock.calls) {
+        expect(String(call[0])).not.toContain("/2/media/metadata");
+      }
+    } finally {
+      unlinkSync(tmp);
+    }
+  });
+});
+
+// ============================================================
+// TwitterClient.updateMediaMetadata
+// ============================================================
+describe("TwitterClient.updateMediaMetadata", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    fetchSpy = vi.spyOn(global, "fetch");
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("POSTs id + metadata.alt_text.text to /2/media/metadata with OAuth1 header", async () => {
+    fetchSpy.mockResolvedValue(new Response(JSON.stringify({}), { status: 200 }));
+
+    const tc = makeClient();
+    await tc.updateMediaMetadata("media_999", "alt description");
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const call = fetchSpy.mock.calls[0];
+    expect(String(call[0])).toContain("/2/media/metadata");
+    expect(call[1]?.method).toBe("POST");
+    const headers = call[1]?.headers as Record<string, string>;
+    expect(headers["Authorization"]).toMatch(/^OAuth /);
+    expect(headers["Content-Type"]).toBe("application/json");
+    const body = JSON.parse(String(call[1]?.body));
+    expect(body).toEqual({ id: "media_999", metadata: { alt_text: { text: "alt description" } } });
+  });
+
+  it("throws on API error", async () => {
+    fetchSpy.mockResolvedValue(new Response("Bad Request", { status: 400 }));
+    const tc = makeClient();
+    await expect(tc.updateMediaMetadata("media_999", "x")).rejects.toThrow(/400/);
+  });
+
+  it("requires OAuth1 credentials", async () => {
+    const tc = makeBearerClient();
+    await expect(tc.updateMediaMetadata("media_999", "x")).rejects.toThrow(/OAuth 1.0a credentials/);
   });
 });
 
