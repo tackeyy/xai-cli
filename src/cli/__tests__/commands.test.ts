@@ -1473,6 +1473,59 @@ describe("CLI commands", () => {
       }
     });
 
+    it("--media with partial --alt-text passes altText only for the matching index", async () => {
+      const { writeFileSync, unlinkSync } = await import("node:fs");
+      const { tmpdir } = await import("node:os");
+      const { join } = await import("node:path");
+      const tmp1 = join(tmpdir(), "test-post-partial1.jpg");
+      const tmp2 = join(tmpdir(), "test-post-partial2.png");
+      writeFileSync(tmp1, Buffer.from([0xff, 0xd8, 0xff, 0xe0]));
+      writeFileSync(tmp2, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+
+      const tc = createMockTwitterClient();
+      (tc as any).uploadMedia = vi.fn()
+        .mockResolvedValueOnce("media_p1")
+        .mockResolvedValueOnce("media_p2");
+
+      try {
+        const { twitterClient } = await run(
+          ["post", "--text", "partial", "--media", tmp1, tmp2, "--alt-text", "only first"],
+          undefined,
+          tc,
+        );
+        // First file gets the alt text, second file has no alt text → undefined.
+        expect((twitterClient as any).uploadMedia).toHaveBeenNthCalledWith(1, tmp1, { altText: "only first" });
+        expect((twitterClient as any).uploadMedia).toHaveBeenNthCalledWith(2, tmp2, undefined);
+      } finally {
+        unlinkSync(tmp1);
+        unlinkSync(tmp2);
+      }
+    });
+
+    it("--media --dry-run with --alt-text prints the alt text without uploading", async () => {
+      const { writeFileSync, unlinkSync } = await import("node:fs");
+      const { tmpdir } = await import("node:os");
+      const { join } = await import("node:path");
+      const tmp = join(tmpdir(), "test-dry-alt.jpg");
+      writeFileSync(tmp, Buffer.from([0xff, 0xd8, 0xff, 0xe0]));
+
+      const tc = createMockTwitterClient();
+      (tc as any).uploadMedia = vi.fn();
+
+      try {
+        await run(
+          ["post", "--dry-run", "--text", "hi", "--media", tmp, "--alt-text", "a bird"],
+          undefined,
+          tc,
+        );
+        expect((tc as any).uploadMedia).not.toHaveBeenCalled();
+        expect(tc.postTweet).not.toHaveBeenCalled();
+        expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('alt="a bird"'));
+      } finally {
+        unlinkSync(tmp);
+      }
+    });
+
     it("--media --dry-run shows file paths and media_type without calling uploadMedia or postTweet", async () => {
       const { writeFileSync, unlinkSync } = await import("node:fs");
       const { tmpdir } = await import("node:os");
@@ -1589,6 +1642,18 @@ describe("CLI commands", () => {
       await run(["following", "99999"], undefined, tc);
       expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("401"));
       expect(exitSpy).toHaveBeenCalledWith(1);
+    });
+
+    it("prints 'Following: 0' cleanly when API omits data on empty result (no error, exit 0)", async () => {
+      const tc = createMockTwitterClient();
+      // X API v2 omits `data` entirely when there are no results.
+      (tc.getFollowing as ReturnType<typeof vi.fn>).mockResolvedValue({
+        meta: { result_count: 0 },
+      });
+      await run(["following", "99999"], undefined, tc);
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Following: 0"));
+      expect(errorSpy).not.toHaveBeenCalled();
+      expect(exitSpy).not.toHaveBeenCalled();
     });
   });
 
@@ -2017,6 +2082,18 @@ describe("CLI commands", () => {
       await run(["followers", "99999"], undefined, tc);
       expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("401"));
       expect(exitSpy).toHaveBeenCalledWith(1);
+    });
+
+    it("prints 'Followers: 0' cleanly when API omits data on empty result (no error, exit 0)", async () => {
+      const tc = createMockTwitterClient();
+      // X API v2 omits `data` entirely when there are no results.
+      (tc.getFollowers as ReturnType<typeof vi.fn>).mockResolvedValue({
+        meta: { result_count: 0 },
+      });
+      await run(["followers", "99999"], undefined, tc);
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Followers: 0"));
+      expect(errorSpy).not.toHaveBeenCalled();
+      expect(exitSpy).not.toHaveBeenCalled();
     });
   });
 

@@ -2471,6 +2471,13 @@ describe("TwitterClient.uploadMedia", () => {
       expect(String(appendCall[0])).toContain("/2/media/upload/media_111/append");
       const appendHeaders = appendCall[1]?.headers as Record<string, string>;
       expect(appendHeaders["Authorization"]).toMatch(/^OAuth /);
+      // Body is FormData with segment_index, and (unlike the legacy command form)
+      // must NOT carry command / media_id in the body — they moved to the URL path.
+      const appendBody = appendCall[1]?.body as FormData;
+      expect(appendBody).toBeInstanceOf(FormData);
+      expect(appendBody.get("segment_index")).toBe("0");
+      expect(appendBody.get("command")).toBeNull();
+      expect(appendBody.get("media_id")).toBeNull();
 
       // FINALIZE: POST /2/media/upload/{id}/finalize, media_id in path (no command body)
       const finalizeCall = fetchSpy.mock.calls[2];
@@ -2668,6 +2675,69 @@ describe("TwitterClient.uploadMedia", () => {
       for (const call of fetchSpy.mock.calls) {
         expect(String(call[0])).not.toContain("/2/media/metadata");
       }
+    } finally {
+      unlinkSync(tmp);
+    }
+  });
+
+  it("propagates the error when the metadata call fails after a successful upload", async () => {
+    const { writeFileSync, unlinkSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const tmp = join(tmpdir(), "test-upload-metafail.jpg");
+    writeFileSync(tmp, Buffer.from([0xff, 0xd8, 0xff, 0xe0]));
+
+    fetchSpy
+      .mockResolvedValueOnce(mockInitResponse("media_mf"))
+      .mockResolvedValueOnce(new Response(JSON.stringify({}), { status: 200 }))
+      .mockResolvedValueOnce(mockFinalizeResponse("media_mf"))
+      .mockResolvedValueOnce(new Response("Forbidden", { status: 403 })); // METADATA fails
+
+    try {
+      const tc = makeClient();
+      await expect(tc.uploadMedia(tmp, { altText: "x" })).rejects.toThrow(/403/);
+    } finally {
+      unlinkSync(tmp);
+    }
+  });
+
+  it("tolerates a legacy top-level media_id_string in the INITIALIZE response", async () => {
+    const { writeFileSync, unlinkSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const tmp = join(tmpdir(), "test-upload-legacy.jpg");
+    writeFileSync(tmp, Buffer.from([0xff, 0xd8, 0xff, 0xe0]));
+
+    fetchSpy
+      .mockResolvedValueOnce(new Response(JSON.stringify({ media_id_string: "media_legacy" }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({}), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ media_id_string: "media_legacy" }), { status: 200 }));
+
+    try {
+      const tc = makeClient();
+      const result = await tc.uploadMedia(tmp);
+      expect(result).toBe("media_legacy");
+      // APPEND/FINALIZE still target the resolved id in the path.
+      expect(String(fetchSpy.mock.calls[1][0])).toContain("/2/media/upload/media_legacy/append");
+    } finally {
+      unlinkSync(tmp);
+    }
+  });
+
+  it("throws when the INITIALIZE response is missing a media id", async () => {
+    const { writeFileSync, unlinkSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const tmp = join(tmpdir(), "test-upload-noid.jpg");
+    writeFileSync(tmp, Buffer.from([0xff, 0xd8, 0xff, 0xe0]));
+
+    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({ data: {} }), { status: 200 }));
+
+    try {
+      const tc = makeClient();
+      await expect(tc.uploadMedia(tmp)).rejects.toThrow(/missing media id/i);
+      // Should fail fast at INITIALIZE — no APPEND/FINALIZE.
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
     } finally {
       unlinkSync(tmp);
     }
