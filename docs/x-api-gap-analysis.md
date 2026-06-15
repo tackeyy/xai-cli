@@ -24,7 +24,7 @@ xai-cli が対象とする X API v2 エンドポイントの**実装状況**（P
 | # | エンドポイント / 機能 | ステータス | コマンド | 備考 |
 |---|---|---|---|---|
 | L1-1 | GET /2/tweets/search/recent | ✅ 実装済み | `search` (`--raw`), `thread` | Bearer |
-| L1-2 | GET /2/tweets/search/all | 🔒 実装済み | `search-all` | **Pro+ ティア必須**。低ティアは 403 |
+| L1-2 | GET /2/tweets/search/all | ✅ 実装済み | `search-all` | **実 API で動作確認済み（2026-06、現アカウントで取得成功）**。Pro+ 必須の断定は緩和（ティア区分は変動する点に留意） |
 | L1-3 | GET /2/tweets/:id | ✅ 実装済み | `tweet --raw` | Bearer / OAuth1 |
 | L1-4 | GET /2/tweets (bulk lookup) | ✅ 実装済み | `tweets <ids...>` | 最大 100 件 |
 | L1-5 | GET /2/tweets/counts/recent | ✅ 実装済み | `counts <query>` | 直近 7 日間 |
@@ -37,7 +37,7 @@ xai-cli が対象とする X API v2 エンドポイントの**実装状況**（P
 | # | エンドポイント / 機能 | ステータス | コマンド | 備考 |
 |---|---|---|---|---|
 | L2-1 | GET /2/users/by/username/:username | ✅ 実装済み | `profile get <handle>` | Bearer |
-| L2-2 | GET /2/users/search | 🔒 実装済み | `user-search <query>` | **要 Pro ティア**（公式に Pro plan で提供） |
+| L2-2 | GET /2/users/search | ⚠️ 実装済み | `user-search <query>` | **認証: User Context 必須**（OAuth 1.0a / OAuth 2.0 User Context）。App-only Bearer は 403（実測 2026-06）。403 はティアでなく認証方式が原因（[#22](https://github.com/tackeyy/xai-cli/issues/22)） |
 | L2-3 | GET /2/users/:id/following | ✅ 実装済み | `following <user>` | Bearer / OAuth1 |
 | L2-4 | GET /2/users/:id/followers | ✅ 実装済み | `followers <user>` | Bearer / OAuth1 |
 | L2-5 | GET /2/users/:id/dm_status | ✅ 実装済み | `dm-check <username>` | Bearer |
@@ -57,7 +57,7 @@ xai-cli が対象とする X API v2 エンドポイントの**実装状況**（P
 
 | # | エンドポイント / 機能 | ステータス | コマンド | 備考 |
 |---|---|---|---|---|
-| L4-1 | GET /2/tweets/search/all | 🔒 実装済み | `search-all <query>` | **Pro+ ティア必須** |
+| L4-1 | GET /2/tweets/search/all | ✅ 実装済み | `search-all <query>` | **実 API で動作確認済み（2026-06）**。Pro+ 必須の断定は緩和 |
 
 ## L5: いいね / リツイート（Enterprise 限定）
 
@@ -79,15 +79,15 @@ xai-cli が対象とする X API v2 エンドポイントの**実装状況**（P
 
 | # | エンドポイント / 機能 | ステータス | コマンド | 備考 |
 |---|---|---|---|---|
-| L7-1 | GET /2/trends/by/woeid/:woeid | ✅ 実装済み | `trends <woeid>` | **エンドポイント仕様が流動的・ティア制約の可能性** |
-| L7-2 | GET /2/spaces/search | ✅ 実装済み | `spaces <query>` | **エンドポイント仕様が流動的・ティア制約の可能性** |
+| L7-1 | GET /2/trends/by/woeid/:woeid | ✅ 実装済み | `trends <woeid>` | **動作確認済み（2026-06、日本トレンド 20 件取得）**。仕様は流動的なので将来変動の可能性は残る |
+| L7-2 | GET /2/spaces/search | ✅ 実装済み | `spaces <query>` | **動作確認済み（2026-06、41 件取得）**。仕様は流動的なので将来変動の可能性は残る |
 
 ## M: 書き込み / 投稿系
 
 | # | エンドポイント / 機能 | ステータス | コマンド | 備考 |
 |---|---|---|---|---|
 | M1 | POST /2/tweets | ✅ 実装済み | `post`, `reply`, `post-thread` | OAuth1 必須 |
-| M1a | POST /2/tweets（メディア添付） | ✅ 実装済み | `post --media <path...>` | `--alt-text` は受付のみ（metadata 反映は未実装・[残タスク参照](#残タスク)） |
+| M1a | POST /2/tweets（メディア添付） | ✅ 実装済み | `post --media <path...>` | `--alt-text` は `POST /2/media/metadata` で反映（実装済み） |
 | M1b | POST /2/tweets（投票） | ✅ 実装済み | `post --poll <opt...>` | `--poll-duration` で期間指定 |
 | M2 | DELETE /2/tweets/:id | ✅ 実装済み | `delete <tweetId>` | `--dry-run` 推奨 |
 | M3 | POST /2/dm_conversations/with/:id/messages | ✅ 実装済み | `dm-send <username> <text>` | `--dry-run` 推奨 |
@@ -95,7 +95,7 @@ xai-cli が対象とする X API v2 エンドポイントの**実装状況**（P
 | M4b | DELETE /2/users/:id/bookmarks/:tweet_id | ✅ 実装済み | `bookmarks remove <tweetId>` | `--dry-run` 推奨 |
 | M5 | POST /1.1/account/update_profile | ✅ 実装済み | `update-profile` | Elevated+ ティア推奨 |
 | M6 | POST /2/tweets（スレッド） | ✅ 実装済み | `post-thread <texts...>` | `--dry-run` 推奨 |
-| M7 | GET /2/users/search | 🔒 実装済み | `user-search <query>` | **要 Pro ティア**（公式に Pro plan で提供） |
+| M7 | GET /2/users/search | ⚠️ 実装済み | `user-search <query>` | **認証: User Context 必須**。App-only Bearer は 403（実測 2026-06）。403 はティアでなく認証方式が原因（[#22](https://github.com/tackeyy/xai-cli/issues/22)） |
 | M8 | Note Tweet（長文投稿） | ❌ 未実装 | — | API 仕様が流動的・未確定のため見送り |
 
 ## D: DM / メッセージ系
@@ -129,7 +129,7 @@ xai-cli が対象とする X API v2 エンドポイントの**実装状況**（P
 
 | # | エンドポイント / 機能 | ステータス | コマンド | 備考 |
 |---|---|---|---|---|
-| Md1 | POST /2/media/upload (chunked INIT/APPEND/FINALIZE/STATUS) | ✅ 実装済み | `post --media <path...>` 経由 | `api.x.com`(=`api.twitter.com`)/2/media/upload。command 方式（v1.1 は2025-06廃止済み）。新 dedicated endpoints への移行は[残タスク](#残タスク) |
+| Md1 | POST /2/media/upload/{initialize,{id}/append,{id}/finalize} | ✅ 実装済み | `post --media <path...>` 経由 | v2 **dedicated endpoints** で実装（command 方式は deprecated のため移行済み）。STATUS 相当のポーリングは動画/GIF のみ。alt-text は `POST /2/media/metadata` |
 
 ---
 
@@ -139,9 +139,10 @@ xai-cli が対象とする X API v2 エンドポイントの**実装状況**（P
 |---|---|
 | Free | `auth test`, `ask`, `embed` |
 | Basic | `search`, `user`, `tweet`, `timeline`, `following`, `followers`, `profile get`, `bookmarks *`, `post`, `reply`, `delete`, `dm-send`, `dm-check`, `update-profile` など |
-| Basic+ | `tweet --metrics`（自分の投稿の非公開メトリクス） |
-| Pro | `user-search` |
-| Pro+ | `search-all`, （`trends` / `spaces` は要確認） |
+| Basic+ | `tweet --metrics`（自分の投稿の非公開メトリクス・未検証） |
+| Pro+ | `search-all`（2026-06 実測で動作確認済み・断定は緩和） |
+| 認証方式の制約 | `user-search` は User Context 必須（Bearer 不可・ティアではなく認証方式） |
+| 動作確認済み（2026-06） | `search-all` / `trends` / `spaces`（仕様は流動的） |
 | Enterprise | いいね / リツイート / フォロー操作（$42,000/月級・未実装） |
 
 ---
@@ -176,7 +177,7 @@ xai-cli が対象とする X API v2 エンドポイントの**実装状況**（P
 - X API は2026年に新規 Free 廃止 → Pay-per-use 中心。**いいね/RT/フォロー操作は Enterprise 限定**（$42k/月級で動作確認不能）→ 未実装。
 - **Filtered/Sampled Stream は Pro+ 限定かつ常駐プロセス前提** → CLI（単発実行）と設計が噛み合わず未実装。
 - **Note Tweet は API 仕様が流動的・未確定** → 見送り。
-- 全期間検索（Pro+）・user search（Pro）・非公開メトリクス（Basic+）は実装したが、アカウントのティア次第で 403 になる。
+- **実 API 疎通確認（2026-06）の実測**: `search-all` / `trends` / `spaces` は現アカウントで動作確認済み（Pro+ 断定は緩和）。`user-search` の 403 は**ティアでなく認証方式**（User Context 必須・Bearer 不可、[#22](https://github.com/tackeyy/xai-cli/issues/22)）。`tweet --metrics`（Basic+・自分の投稿のみ）は未検証。
 
 ---
 
@@ -185,9 +186,9 @@ xai-cli が対象とする X API v2 エンドポイントの**実装状況**（P
 
 | # | 項目 | 内容 |
 |---|---|---|
-| T1 | alt-text のメタデータ反映 | `post --alt-text` は現在オプション受付＋warn告知のみ。`POST /2/media/metadata`（または v1.1 `media/metadata/create.json`）を `uploadMedia` 後に呼ぶ実装が未着手 |
-| T2 | メディアアップロードの新方式移行 | command 方式（`/2/media/upload?command=INIT`）は deprecated。新 dedicated endpoints（`/2/media/upload/initialize`・`/{id}/append`・`/{id}/finalize`）への移行を検討 |
-| T3 | 実 API 疎通確認 | `search-all`(Pro+) / `user-search`(Pro) / `tweet --metrics`(Basic+) / `trends` / `spaces` は瀧田アカウントのティアで実際に叩けるか未検証 |
+| T1 | ~~alt-text のメタデータ反映~~ | ✅ 完了（#24）。`uploadMedia` 後に `POST /2/media/metadata` を呼び alt_text を反映 |
+| T2 | ~~メディアアップロードの新方式移行~~ | ✅ 完了（#25）。dedicated endpoints（`/2/media/upload/initialize`・`/{id}/append`・`/{id}/finalize`）へ移行済み |
+| T3 | 実 API 疎通確認 | ✅ 一部完了（#23）。`search-all` / `trends` / `spaces` は 2026-06 に動作確認済み。`user-search` は認証方式の問題と判明（#22）。`tweet --metrics`(Basic+・自分の投稿のみ) は未検証 |
 | T4 | 書き込み系の実操作フロー | `mute`/`block` 等は `--dry-run` 必須。将来実操作を許可するなら `--force` 等のフロー設計が必要 |
 | T5 | ティア変更時の再検討 | L1 いいね/RT・L2 フォロー操作・L5 Stream は、アカウントが Enterprise/Pro+ になった場合に実装を再検討 |
 

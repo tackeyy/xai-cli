@@ -56,10 +56,10 @@ X API v2 書き込み系（OAuth1 / OAuth2 User Token 主体）:
 
 ### ティア制約の注意
 
-- `search-all`: 要 Pro+ ティア（Academic Research アクセス）
-- `user-search`: 要 Pro ティア（公式に Pro plan で提供）
-- `tweet --metrics`: 自分の投稿のみ・要 Basic+ ティア
-- `trends` / `spaces`: エンドポイント仕様が流動的・ティア制約の可能性
+- `search-all`: 2026-06 に現アカウントで動作確認済み（一般には Pro+ / Academic Research とされるが必須の断定は緩和）
+- `user-search`: **認証方式の制約**。User Context 必須（OAuth1 / OAuth2 User Context）で App-only Bearer は 403。403 はティアでなく認証方式が原因（#22）
+- `tweet --metrics`: 自分の投稿のみ・要 Basic+ ティア（未検証）
+- `trends` / `spaces`: 2026-06 に動作確認済み（trends 20 件 / spaces 41 件）。仕様は流動的で将来変動の可能性あり
 - 書き込み系全般: `--dry-run` で事前確認を推奨
 - いいね / リツイート / フォロー操作: Enterprise 限定（未実装）
 

@@ -227,7 +227,7 @@ xai user-search "zeimu" --max-results 10
 xai --json user-search "M&A"
 ```
 
-> **Note**: Requires **Pro tier** (officially provided on Pro plan). Lower tiers return 403.
+> **Note**: Requires **User Context authentication** (OAuth 1.0a or OAuth 2.0 User Context). App-only Bearer returns 403 — the 403 is caused by the auth method, **not** the tier (verified 2026-06, see [#22](https://github.com/tackeyy/xai-cli/issues/22)).
 
 ### Full-Archive Tweet Search
 
@@ -237,7 +237,7 @@ xai search-all "OpenAI" --max-results 100
 xai --json search-all "AI accounting"
 ```
 
-> **Important**: Requires **Pro+ tier (Academic Research access)**. Lower tiers return 403.
+> **Note**: Verified working in 2026-06 on the current account. Often documented as **Pro+ tier (Academic Research access)**, but the hard requirement is relaxed here based on the live check (X API tiers change frequently — confirm in the Developer Portal).
 
 ### Trends
 
@@ -252,7 +252,7 @@ xai trends 1118370
 xai --json trends 23424856
 ```
 
-> **Note**: Endpoint specification is in flux and may have tier restrictions.
+> **Note**: Verified working in 2026-06 (retrieved 20 Japan trends). Endpoint specification is still in flux and may change in the future.
 
 ### Twitter Spaces Search
 
@@ -262,7 +262,7 @@ xai spaces "startup" --max-results 20
 xai --json spaces "M&A"
 ```
 
-> **Note**: Endpoint specification is in flux and may have tier restrictions.
+> **Note**: Verified working in 2026-06 (retrieved 41 results). Endpoint specification is still in flux and may change in the future.
 
 ### Fetch Tweet by URL
 
