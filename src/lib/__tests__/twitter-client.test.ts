@@ -2708,6 +2708,8 @@ describe("TwitterClient.uploadMedia", () => {
     const tmp = join(tmpdir(), "test-upload-legacy.jpg");
     writeFileSync(tmp, Buffer.from([0xff, 0xd8, 0xff, 0xe0]));
 
+    // Both INITIALIZE and FINALIZE use the legacy top-level `media_id_string`
+    // shape (no `data` wrapper). FINALIZE without processing_info skips polling.
     fetchSpy
       .mockResolvedValueOnce(new Response(JSON.stringify({ media_id_string: "media_legacy" }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({}), { status: 200 }))
