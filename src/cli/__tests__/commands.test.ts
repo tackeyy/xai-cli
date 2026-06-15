@@ -1435,14 +1435,41 @@ describe("CLI commands", () => {
           tc,
         );
         expect((twitterClient as any).uploadMedia).toHaveBeenCalledTimes(2);
-        expect((twitterClient as any).uploadMedia).toHaveBeenCalledWith(tmp1);
-        expect((twitterClient as any).uploadMedia).toHaveBeenCalledWith(tmp2);
+        // No --alt-text given → second arg is undefined.
+        expect((twitterClient as any).uploadMedia).toHaveBeenCalledWith(tmp1, undefined);
+        expect((twitterClient as any).uploadMedia).toHaveBeenCalledWith(tmp2, undefined);
         expect(twitterClient.postTweet).toHaveBeenCalledWith(
           expect.objectContaining({ mediaIds: ["media_aaa", "media_bbb"] }),
         );
       } finally {
         unlinkSync(tmp1);
         unlinkSync(tmp2);
+      }
+    });
+
+    it("--media with --alt-text passes altText to uploadMedia (no warn)", async () => {
+      const { writeFileSync, unlinkSync } = await import("node:fs");
+      const { tmpdir } = await import("node:os");
+      const { join } = await import("node:path");
+      const tmp = join(tmpdir(), "test-post-media-alt.jpg");
+      writeFileSync(tmp, Buffer.from([0xff, 0xd8, 0xff, 0xe0]));
+
+      const tc = createMockTwitterClient();
+      (tc as any).uploadMedia = vi.fn().mockResolvedValue("media_alt");
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      try {
+        const { twitterClient } = await run(
+          ["post", "--text", "with alt", "--media", tmp, "--alt-text", "a red bird"],
+          undefined,
+          tc,
+        );
+        expect((twitterClient as any).uploadMedia).toHaveBeenCalledWith(tmp, { altText: "a red bird" });
+        // The legacy "not implemented" warning must be gone.
+        expect(warnSpy).not.toHaveBeenCalledWith(expect.stringContaining("未実装"));
+      } finally {
+        warnSpy.mockRestore();
+        unlinkSync(tmp);
       }
     });
 
@@ -2027,6 +2054,18 @@ describe("CLI commands", () => {
       await run(["lists", "99999"], undefined, tc);
       expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("401"));
       expect(exitSpy).toHaveBeenCalledWith(1);
+    });
+
+    it("prints 'Lists: 0' cleanly when API omits data on empty result (no error, exit 0)", async () => {
+      const tc = createMockTwitterClient();
+      // X API v2 omits `data` entirely when the user owns no lists.
+      (tc.getOwnedLists as ReturnType<typeof vi.fn>).mockResolvedValue({
+        meta: { result_count: 0 },
+      });
+      await run(["lists", "99999"], undefined, tc);
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Lists: 0"));
+      expect(errorSpy).not.toHaveBeenCalled();
+      expect(exitSpy).not.toHaveBeenCalled();
     });
   });
 

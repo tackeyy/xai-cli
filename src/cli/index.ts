@@ -975,11 +975,6 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
         dryRun?: boolean;
       }) => {
         try {
-          // Warn when --alt-text is specified (metadata update API not yet implemented)
-          if (opts.altText && opts.altText.length > 0) {
-            console.warn("[warn] --alt-text は現在メタデータ反映が未実装です（オプション受付のみ）");
-          }
-
           if (opts.dryRun) {
             const dummy = new TwitterClient({
               apiKey: "dry-run",
@@ -1032,8 +1027,10 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
           let mediaIds: string[] | undefined;
           if (opts.media && opts.media.length > 0) {
             mediaIds = [];
-            for (const mediaPath of opts.media) {
-              const mediaId = await tc.uploadMedia(mediaPath);
+            for (let i = 0; i < opts.media.length; i++) {
+              const mediaPath = opts.media[i];
+              const altText = opts.altText?.[i];
+              const mediaId = await tc.uploadMedia(mediaPath, altText ? { altText } : undefined);
               mediaIds.push(mediaId);
             }
           }
@@ -2706,23 +2703,27 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
   return program;
 }
 
-function formatFollowingOutput(data: Array<{ id: string; username?: string; name?: string }>, totalCount: number): void {
+function formatFollowingOutput(data: Array<{ id: string; username?: string; name?: string }> | undefined, totalCount: number): void {
   console.log(`Following: ${totalCount} users`);
-  for (const user of data) {
+  // X API v2 omits `data` entirely on empty results; guard against undefined.
+  for (const user of data ?? []) {
     console.log(`@${user.username ?? "?"}\t${user.name ?? ""}\t${user.id}`);
   }
 }
 
-function formatFollowersOutput(data: Array<{ id: string; username?: string; name?: string }>, totalCount: number): void {
+function formatFollowersOutput(data: Array<{ id: string; username?: string; name?: string }> | undefined, totalCount: number): void {
   console.log(`Followers: ${totalCount} users`);
-  for (const user of data) {
+  // X API v2 omits `data` entirely on empty results; guard against undefined.
+  for (const user of data ?? []) {
     console.log(`@${user.username ?? "?"}\t${user.name ?? ""}\t${user.id}`);
   }
 }
 
-function formatListsOutput(data: Array<{ id: string; name: string; description?: string }>, totalCount: number): void {
+function formatListsOutput(data: Array<{ id: string; name: string; description?: string }> | undefined, totalCount: number): void {
   console.log(`Lists: ${totalCount}`);
-  for (const list of data) {
+  // X API v2 omits `data` when the user owns no lists; guard against undefined
+  // so `xai lists <user-with-no-lists>` prints "Lists: 0" cleanly (exit 0).
+  for (const list of data ?? []) {
     const desc = list.description ? `\t${list.description}` : "";
     console.log(`${list.id}\t${list.name}${desc}`);
   }
