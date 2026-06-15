@@ -227,7 +227,7 @@ xai user-search "zeimu" --max-results 10
 xai --json user-search "M&A"
 ```
 
-> **注意**: **Pro ティアが必要**です（公式に Pro plan で提供）。低いティアでは 403 が返ります。
+> **注意**: **User Context 認証が必須**です（OAuth 1.0a または OAuth 2.0 User Context）。App-only Bearer では 403 になります。この 403 はティアではなく**認証方式**が原因です（2026-06 実測・[#22](https://github.com/tackeyy/xai-cli/issues/22)）。
 
 ### 全期間ツイート検索
 
@@ -237,7 +237,7 @@ xai search-all "OpenAI" --max-results 100
 xai --json search-all "AI 会計"
 ```
 
-> **重要**: **Pro+ ティア（Academic Research アクセス）が必須**です。低いティアでは 403 が返ります。
+> **注意**: 2026-06 に現アカウントで動作確認済みです。一般には **Pro+ ティア（Academic Research アクセス）** とされますが、実測に基づき必須要件の断定は緩和しています（X API のティア区分は変動が速いため Developer Portal で最終確認を推奨）。
 
 ### トレンド取得
 
@@ -252,7 +252,7 @@ xai trends 1118370
 xai --json trends 23424856
 ```
 
-> **注意**: エンドポイント仕様が流動的であり、ティア制約の可能性があります。
+> **注意**: 2026-06 に動作確認済みです（日本トレンド 20 件取得）。エンドポイント仕様は依然流動的であり、将来変動の可能性があります。
 
 ### Twitter Spaces 検索
 
@@ -262,7 +262,7 @@ xai spaces "startup" --max-results 20
 xai --json spaces "M&A"
 ```
 
-> **注意**: エンドポイント仕様が流動的であり、ティア制約の可能性があります。
+> **注意**: 2026-06 に動作確認済みです（41 件取得）。エンドポイント仕様は依然流動的であり、将来変動の可能性があります。
 
 ### ツイートURL から内容取得
 
