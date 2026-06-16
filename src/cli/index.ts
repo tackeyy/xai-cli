@@ -236,6 +236,13 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
           const startTime = opts.startTime ?? (opts.from ? opts.from + "T00:00:00Z" : undefined);
           const endTime = opts.endTime ?? (opts.to ? opts.to + "T23:59:59Z" : undefined);
           const authMode = (opts.auth === "oauth1" ? "oauth1" : "bearer") as "bearer" | "oauth1";
+          // Auto-include author_id expansion and username user.fields for structured output
+          const expansions = opts.expansions
+            ? [...new Set([...opts.expansions, "author_id"])]
+            : ["author_id"];
+          const userFields = opts.userFields
+            ? [...new Set([...opts.userFields, "username"])]
+            : ["username"];
           const result = await tc.searchRecent(query, {
             startTime,
             endTime,
@@ -243,13 +250,33 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
             untilId: opts.untilId,
             maxResults: rawMaxResults,
             tweetFields: opts.tweetFields,
-            expansions: opts.expansions,
-            userFields: opts.userFields,
+            expansions,
+            userFields,
             mediaFields: opts.mediaFields,
             paginationToken: opts.paginationToken,
             auth: authMode,
           });
-          console.log(JSON.stringify(result, null, 2));
+          // Build user lookup map from includes
+          const userMap = new Map<string, string>();
+          if (result.includes?.users) {
+            for (const user of result.includes.users) {
+              if (user.id && user.username) userMap.set(user.id, user.username);
+            }
+          }
+          const structured = (result.data ?? []).map((tweet) => {
+            const authorUsername = tweet.author_id ? userMap.get(tweet.author_id) : undefined;
+            const url = authorUsername
+              ? `https://x.com/${authorUsername}/status/${tweet.id}`
+              : `https://x.com/i/status/${tweet.id}`;
+            return {
+              id: tweet.id,
+              text: tweet.text,
+              ...(authorUsername !== undefined && { authorUsername }),
+              createdAt: tweet.created_at,
+              url,
+            };
+          });
+          console.log(JSON.stringify(structured, null, 2));
         } else {
           const client = getClient();
           const result = await client.search(query, {

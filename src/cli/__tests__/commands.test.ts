@@ -125,7 +125,11 @@ function createMockTwitterClient(): TwitterClient {
       includes: { tweets: [{ id: "100", text: "root" }] },
     }),
     searchRecent: vi.fn().mockResolvedValue({
-      data: [{ id: "100", text: "root" }, { id: "999", text: "hello world" }],
+      data: [
+        { id: "100", text: "root tweet", author_id: "u1", created_at: "2026-01-01T00:00:00Z" },
+        { id: "999", text: "hello world", author_id: "u2", created_at: "2026-01-02T00:00:00Z" },
+      ],
+      includes: { users: [{ id: "u1", username: "alice" }, { id: "u2", username: "bob" }] },
       meta: { result_count: 2 },
     }),
     getConversation: vi.fn().mockResolvedValue({
@@ -411,11 +415,82 @@ describe("CLI commands", () => {
       stderrSpy.mockRestore();
     });
 
-    it("--raw without --json outputs raw JSON string", async () => {
+    it("--raw outputs structured JSON array (not raw API response)", async () => {
       await run(["search", "AI", "--raw"]);
       const output = logSpy.mock.calls[0][0];
       const parsed = JSON.parse(output);
-      expect(parsed).toHaveProperty("data");
+      expect(Array.isArray(parsed)).toBe(true);
+    });
+
+    it("--raw output items have id, text, authorUsername, createdAt, url fields", async () => {
+      await run(["search", "AI", "--raw"]);
+      const output = logSpy.mock.calls[0][0];
+      const parsed = JSON.parse(output);
+      expect(parsed[0]).toMatchObject({
+        id: "100",
+        text: "root tweet",
+        authorUsername: "alice",
+        createdAt: "2026-01-01T00:00:00Z",
+        url: "https://x.com/alice/status/100",
+      });
+      expect(parsed[1]).toMatchObject({
+        id: "999",
+        text: "hello world",
+        authorUsername: "bob",
+        createdAt: "2026-01-02T00:00:00Z",
+        url: "https://x.com/bob/status/999",
+      });
+    });
+
+    it("--raw auto-adds author_id expansion and username user.fields when not specified", async () => {
+      const { twitterClient } = await run(["search", "AI", "--raw"]);
+      expect(twitterClient.searchRecent).toHaveBeenCalledWith(
+        "AI",
+        expect.objectContaining({
+          expansions: expect.arrayContaining(["author_id"]),
+          userFields: expect.arrayContaining(["username"]),
+        }),
+      );
+    });
+
+    it("--raw falls back to author_id in URL when username not available", async () => {
+      const tc = createMockTwitterClient();
+      (tc.searchRecent as any).mockResolvedValue({
+        data: [{ id: "777", text: "no username tweet", author_id: "u99", created_at: "2026-03-01T00:00:00Z" }],
+        includes: { users: [] },
+        meta: { result_count: 1 },
+      });
+      await run(["search", "AI", "--raw"], undefined, tc);
+      const output = logSpy.mock.calls[0][0];
+      const parsed = JSON.parse(output);
+      expect(parsed[0]).toMatchObject({
+        id: "777",
+        url: "https://x.com/i/status/777",
+      });
+      expect(parsed[0].authorUsername).toBeUndefined();
+    });
+
+    it("--raw with empty data returns empty array", async () => {
+      const tc = createMockTwitterClient();
+      (tc.searchRecent as any).mockResolvedValue({
+        data: [],
+        meta: { result_count: 0 },
+      });
+      await run(["search", "AI", "--raw"], undefined, tc);
+      const output = logSpy.mock.calls[0][0];
+      const parsed = JSON.parse(output);
+      expect(parsed).toEqual([]);
+    });
+
+    it("--raw with no data field returns empty array", async () => {
+      const tc = createMockTwitterClient();
+      (tc.searchRecent as any).mockResolvedValue({
+        meta: { result_count: 0 },
+      });
+      await run(["search", "AI", "--raw"], undefined, tc);
+      const output = logSpy.mock.calls[0][0];
+      const parsed = JSON.parse(output);
+      expect(parsed).toEqual([]);
     });
 
     it("without --raw calls client.search (LLM path) as before", async () => {
