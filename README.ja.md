@@ -501,6 +501,27 @@ xai --plain search "AI"   # プレーンテキスト出力
 xai search "AI"           # ヒューマンリーダブル（デフォルト）
 ```
 
+### ローカルスキル互換 contract
+
+X 関連のローカルスキルは、X / xAI API への入口を `xai` CLI に固定します。スキルが不足している endpoint、option、JSON 項目、trace 機能を必要とする場合は、スキル内に `curl`・直接 HTTP・一時スクリプトを追加せず、先に `xai-cli` を拡張してください。
+
+スキル利用者向けに、少なくとも以下のコマンドとオプションは後方互換を維持します。
+
+- `xai ask`, `xai search`, `xai tweet`, `xai tweet --raw --json`, `xai thread --json`, `xai user`
+- `--from`, `--to`, `--allow`, `--exclude`, `--json`, `--plain`, `--raw`, `--auth`
+- `--trace-jsonl`, `--trace-dir`, `--trace-response`, `--no-trace-redact-prompts`
+
+CLI 挙動を変更する前の最低 smoke check:
+
+```bash
+xai ask "test" --from 2026-06-01 --to 2026-06-24
+xai search "AI" --json
+xai tweet "https://x.com/{user}/status/{id}" --raw --json
+xai thread "{tweetId}" --json
+xai user "{handle}" --from 2026-06-01
+xai ask "test" --trace-jsonl --trace-dir /tmp/xai-trace --trace-response
+```
+
 ## 未実装機能とその理由
 
 以下の機能は意図的に未実装です。

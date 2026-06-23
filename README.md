@@ -501,6 +501,27 @@ xai --plain search "AI"   # Plain text output
 xai search "AI"           # Human-readable (default)
 ```
 
+### Local Skill Compatibility Contract
+
+Local X-related skills use `xai` as their only X / xAI API boundary. If a skill needs a missing endpoint, option, JSON field, or trace capability, add it to `xai-cli` first instead of adding `curl`, direct HTTP, or one-off scripts to the skill.
+
+Keep these commands and options backward compatible for skill users:
+
+- `xai ask`, `xai search`, `xai tweet`, `xai tweet --raw --json`, `xai thread --json`, `xai user`
+- `--from`, `--to`, `--allow`, `--exclude`, `--json`, `--plain`, `--raw`, `--auth`
+- `--trace-jsonl`, `--trace-dir`, `--trace-response`, `--no-trace-redact-prompts`
+
+Minimum smoke checks before changing CLI behavior:
+
+```bash
+xai ask "test" --from 2026-06-01 --to 2026-06-24
+xai search "AI" --json
+xai tweet "https://x.com/{user}/status/{id}" --raw --json
+xai thread "{tweetId}" --json
+xai user "{handle}" --from 2026-06-01
+xai ask "test" --trace-jsonl --trace-dir /tmp/xai-trace --trace-response
+```
+
 ## Intentionally Unimplemented Features
 
 The following features are intentionally not implemented.

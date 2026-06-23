@@ -67,6 +67,28 @@ X API v2 書き込み系（OAuth1 / OAuth2 User Token 主体）:
 
 `npm link` で `~/dev/xai-cli` がグローバルにリンクされる。ビルド後すぐに `xai` コマンドに反映される。
 
+### ローカル X 系スキル互換 contract
+
+`x-search` / `x-tweet` / `x-quote` / `linkedin-post` などのローカルスキルは、X / xAI API への入口を必ず `xai` CLI に固定する。スキル側で `curl`、直接 HTTP、独自の一時スクリプトによる回避実装を追加しない。
+
+`xai` に不足機能がある場合は、スキルを迂回させず、このリポジトリで CLI コマンド・オプション・JSON 出力・trace 機能を追加する。既存スキル互換のため、少なくとも次の contract は破壊的に変更しない。
+
+- コマンド: `xai ask`, `xai search`, `xai tweet`, `xai tweet --raw --json`, `xai thread --json`, `xai user`
+- 主要オプション: `--from`, `--to`, `--allow`, `--exclude`, `--json`, `--plain`, `--raw`, `--auth`
+- trace flags: `--trace-jsonl`, `--trace-dir`, `--trace-response`, `--no-trace-redact-prompts`
+- `x_search` 系 JSON 出力: `text` を必須とし、`usage`, `cost_usd`, `ontology` は後方互換な追加メタデータとして扱う
+
+互換確認の最低 smoke test:
+
+```bash
+xai ask "test" --from 2026-06-01 --to 2026-06-24
+xai search "AI" --json
+xai tweet "https://x.com/{user}/status/{id}" --raw --json
+xai thread "{tweetId}" --json
+xai user "{handle}" --from 2026-06-01
+xai ask "test" --trace-jsonl --trace-dir /tmp/xai-trace --trace-response
+```
+
 ### ドキュメント
 
 - `README.md` — 英語ドキュメント（主要ドキュメント）

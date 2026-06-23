@@ -71,6 +71,12 @@ npm link
 xai --version
 ```
 
+## Local Skill Compatibility
+
+Several local X-related skills depend on the `xai` command as their only approved X / xAI API boundary. Do not solve missing skill needs with `curl`, direct HTTP calls, or one-off scripts in those skills. Add the missing command, option, JSON field, or trace capability to `xai-cli` instead.
+
+Changes that touch `ask`, `search`, `tweet`, `thread`, `user`, output modes, or trace flags should preserve backward compatibility or explicitly document a migration path. Run the README smoke checks when changing CLI behavior.
+
 ## Coding Standards
 
 ### TypeScript Style

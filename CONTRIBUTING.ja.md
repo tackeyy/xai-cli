@@ -68,6 +68,12 @@ npm link
 xai --version
 ```
 
+## ローカルスキル互換性
+
+複数の X 関連ローカルスキルは、X / xAI API への唯一の承認済み入口として `xai` コマンドに依存しています。スキル側で必要になった機能を `curl`、直接 HTTP、一時スクリプトで回避せず、必要なコマンド・オプション・JSON 項目・trace 機能を `xai-cli` に追加してください。
+
+`ask`、`search`、`tweet`、`thread`、`user`、出力モード、trace flags に触れる変更では後方互換を維持し、破壊的変更が避けられない場合は移行手順を明記してください。CLI 挙動を変える場合は README の smoke check を実行します。
+
 ## コーディング規約
 
 ### TypeScript スタイル
