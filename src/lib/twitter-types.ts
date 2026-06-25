@@ -74,6 +74,14 @@ export interface TwitterMedia {
   type: "photo" | "video" | "animated_gif" | string;
   url?: string;
   preview_image_url?: string;
+  width?: number;
+  height?: number;
+  duration_ms?: number;
+  variants?: Array<{
+    bit_rate?: number;
+    content_type?: string;
+    url: string;
+  }>;
 }
 
 export interface TwitterIncludes {

@@ -273,10 +273,22 @@ xai tweet "https://x.com/elonmusk/status/123456789"
 # X API v2 直叩き（構造化 JSON）
 xai tweet "https://x.com/elonmusk/status/123456789" --raw --json
 
+# メディア/引用構造の調査用プリセット
+xai tweet "https://x.com/elonmusk/status/123456789" --raw --preset media --json
+
+# 添付メディアと引用投稿の構造を人間向けに要約
+xai tweet "https://x.com/elonmusk/status/123456789" --inspect
+xai --json tweet "https://x.com/elonmusk/status/123456789" --inspect
+
 # 非公開メトリクス取得（自分の投稿のみ、OAuth1 必須、要 Basic+）
 # impression 数などの非公開メトリクスを取得できます
 xai tweet 1234567890123456789 --raw --metrics
 ```
+
+`--preset media` は、添付メディア、動画 variants、entities、引用投稿の
+取得に必要な X API フィールドをまとめて指定します。`--inspect` は同じ
+プリセットを使い、メディアファイルをダウンロードせずに
+`uploaded_video_with_quoted_tweet` などの正規化サマリを返します。
 
 ### 画像 OCR / Vision 解析 (--image)
 

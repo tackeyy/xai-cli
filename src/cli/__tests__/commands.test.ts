@@ -1073,6 +1073,140 @@ describe("CLI commands", () => {
       expect(parsed.data.conversation_id).toBe("100");
     });
 
+    it("--raw --preset media expands tweet, media, and quote lookup fields", async () => {
+      const { twitterClient } = await run(["tweet", "123", "--raw", "--preset", "media"]);
+
+      expect(twitterClient.getTweetById).toHaveBeenCalledWith(
+        "123",
+        expect.objectContaining({
+          tweetFields: [
+            "id",
+            "text",
+            "created_at",
+            "author_id",
+            "conversation_id",
+            "attachments",
+            "entities",
+            "referenced_tweets",
+            "public_metrics",
+          ],
+          expansions: [
+            "attachments.media_keys",
+            "author_id",
+            "referenced_tweets.id",
+            "referenced_tweets.id.author_id",
+          ],
+          userFields: ["username", "name"],
+          mediaFields: [
+            "duration_ms",
+            "height",
+            "width",
+            "preview_image_url",
+            "type",
+            "url",
+            "variants",
+          ],
+        }),
+      );
+    });
+
+    it("--inspect --json summarizes uploaded video and quoted tweet structure", async () => {
+      const tc = createMockTwitterClient();
+      (tc.getTweetById as ReturnType<typeof vi.fn>).mockResolvedValue({
+        data: {
+          id: "2057425997017047418",
+          text: "comment https://t.co/video https://t.co/quote",
+          attachments: { media_keys: ["13_2057425415095074816"] },
+          referenced_tweets: [{ type: "quoted", id: "2057389263759487250" }],
+          entities: {
+            urls: [
+              {
+                url: "https://t.co/video",
+                expanded_url: "https://x.com/genmai_tokyo/status/2057425997017047418/video/1",
+                display_url: "pic.x.com/knSjyB6LC3",
+                media_key: "13_2057425415095074816",
+              },
+              {
+                url: "https://t.co/quote",
+                expanded_url: "https://twitter.com/chokin_hanashi/status/2057389263759487250",
+                display_url: "x.com/chokin_hanashi/status/...",
+              },
+            ],
+          },
+        },
+        includes: {
+          media: [
+            {
+              media_key: "13_2057425415095074816",
+              type: "video",
+              width: 1280,
+              height: 704,
+              duration_ms: 41066,
+              preview_image_url: "https://pbs.twimg.com/amplify_video_thumb/2057425415095074816/img/t9J.jpg",
+              variants: [
+                { bit_rate: 2176000, content_type: "video/mp4", url: "https://video.twimg.com/video.mp4" },
+              ],
+            },
+          ],
+          tweets: [
+            {
+              id: "2057389263759487250",
+              text: "quoted text",
+              author_id: "1498867467355299842",
+            },
+          ],
+          users: [
+            { id: "1498867467355299842", username: "chokin_hanashi", name: "貯金の話" },
+          ],
+        },
+      });
+
+      await run(["--json", "tweet", "2057425997017047418", "--inspect"], undefined, tc);
+
+      const parsed = JSON.parse(logSpy.mock.calls[0][0] as string);
+      expect(parsed.classification).toEqual({
+        has_uploaded_media: true,
+        media_types: ["video"],
+        has_quote: true,
+        post_pattern: "uploaded_video_with_quoted_tweet",
+      });
+      expect(parsed.media[0]).toMatchObject({
+        media_key: "13_2057425415095074816",
+        type: "video",
+        width: 1280,
+        height: 704,
+        duration_ms: 41066,
+        variants: [{ bit_rate: 2176000, content_type: "video/mp4", url: "https://video.twimg.com/video.mp4" }],
+      });
+      expect(parsed.quoted_tweets[0]).toMatchObject({
+        id: "2057389263759487250",
+        author_username: "chokin_hanashi",
+      });
+    });
+
+    it("--inspect prints a compact human-readable media summary", async () => {
+      const tc = createMockTwitterClient();
+      (tc.getTweetById as ReturnType<typeof vi.fn>).mockResolvedValue({
+        data: {
+          id: "1",
+          text: "comment",
+          attachments: { media_keys: ["13_video"] },
+          referenced_tweets: [{ type: "quoted", id: "2" }],
+        },
+        includes: {
+          media: [{ media_key: "13_video", type: "video", width: 1280, height: 704, duration_ms: 41066 }],
+          tweets: [{ id: "2", text: "quoted", author_id: "u2" }],
+          users: [{ id: "u2", username: "quoted_user" }],
+        },
+      });
+
+      await run(["tweet", "1", "--inspect"], undefined, tc);
+
+      expect(logSpy).toHaveBeenCalledWith("Post pattern: uploaded_video_with_quoted_tweet");
+      expect(logSpy).toHaveBeenCalledWith("- media 13_video: video (1280x704, 41.1s)");
+      expect(logSpy).toHaveBeenCalledWith("- quoted @quoted_user/status/2");
+    });
+
     // --- --image flag tests (Issue #15) ---
 
     it("--image: tweet without images falls back to text-only output", async () => {

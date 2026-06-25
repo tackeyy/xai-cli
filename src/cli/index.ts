@@ -3,7 +3,14 @@ import { Command, InvalidArgumentError, Option } from "commander";
 import { extname } from "node:path";
 import { XaiClient } from "../lib/client.js";
 import { TwitterClient, TweetTooLongError } from "../lib/twitter-client.js";
-import type { DmCheckResult, TwitterBookmarkResponse } from "../lib/twitter-types.js";
+import type {
+  DmCheckResult,
+  TwitterBookmarkResponse,
+  TwitterMedia,
+  TwitterTweet,
+  TwitterTweetLookupResponse,
+  TwitterUser,
+} from "../lib/twitter-types.js";
 import { embedCommand } from "./embed.js";
 import { computeTweetLength, TWEET_MAX_LENGTH } from "../lib/tweet-length.js";
 
@@ -54,6 +61,138 @@ function parseCsv(value: string): string[] {
 
 function stripAt(value: string): string {
   return value.startsWith("@") ? value.slice(1) : value;
+}
+
+const TWEET_MEDIA_PRESET_TWEET_FIELDS = [
+  "id",
+  "text",
+  "created_at",
+  "author_id",
+  "conversation_id",
+  "attachments",
+  "entities",
+  "referenced_tweets",
+  "public_metrics",
+];
+
+const TWEET_MEDIA_PRESET_EXPANSIONS = [
+  "attachments.media_keys",
+  "author_id",
+  "referenced_tweets.id",
+  "referenced_tweets.id.author_id",
+];
+
+const TWEET_MEDIA_PRESET_USER_FIELDS = ["username", "name"];
+
+const TWEET_MEDIA_PRESET_MEDIA_FIELDS = [
+  "duration_ms",
+  "height",
+  "width",
+  "preview_image_url",
+  "type",
+  "url",
+  "variants",
+];
+
+function uniqueStrings(values: Array<string | undefined>): string[] {
+  return [...new Set(values.filter((value): value is string => Boolean(value)))];
+}
+
+interface TweetInspection {
+  tweet_id?: string;
+  classification: {
+    has_uploaded_media: boolean;
+    media_types: string[];
+    has_quote: boolean;
+    post_pattern: string;
+  };
+  media: TwitterMedia[];
+  links: Array<Record<string, unknown>>;
+  quoted_tweets: Array<{
+    id: string;
+    text?: string;
+    author_id?: string;
+    author_username?: string;
+    author_name?: string;
+  }>;
+}
+
+function buildTweetInspection(result: TwitterTweetLookupResponse): TweetInspection {
+  const tweet = result.data;
+  const attachments = tweet.attachments as { media_keys?: string[] } | undefined;
+  const entities = tweet.entities as { urls?: Array<Record<string, unknown>> } | undefined;
+  const mediaKeys = Array.isArray(attachments?.media_keys) ? attachments.media_keys : [];
+  const includedMedia = result.includes?.media ?? [];
+  const media = mediaKeys
+    .map((key) => includedMedia.find((item) => item.media_key === key))
+    .filter((item): item is TwitterMedia => Boolean(item));
+  const mediaTypes = uniqueStrings(media.map((item) => item.type));
+  const hasQuote = Array.isArray(tweet.referenced_tweets)
+    ? tweet.referenced_tweets.some((ref) => ref.type === "quoted")
+    : false;
+  const hasUploadedMedia = media.length > 0;
+  const hasVideo = mediaTypes.includes("video") || mediaTypes.includes("animated_gif");
+  const postPattern = hasUploadedMedia && hasVideo && hasQuote
+    ? "uploaded_video_with_quoted_tweet"
+    : hasUploadedMedia && hasQuote
+      ? "uploaded_media_with_quoted_tweet"
+      : hasUploadedMedia && hasVideo
+        ? "uploaded_video"
+        : hasUploadedMedia
+          ? "uploaded_media"
+          : hasQuote
+            ? "quoted_tweet"
+            : "text_or_link_post";
+  const usersById = new Map<string, TwitterUser>();
+  for (const user of result.includes?.users ?? []) {
+    if (user.id) usersById.set(user.id, user);
+  }
+  const tweetsById = new Map<string, TwitterTweet>();
+  for (const includedTweet of result.includes?.tweets ?? []) {
+    if (includedTweet.id) tweetsById.set(includedTweet.id, includedTweet);
+  }
+  const quotedTweets = (tweet.referenced_tweets ?? [])
+    .filter((ref) => ref.type === "quoted")
+    .map((ref) => {
+      const includedTweet = tweetsById.get(ref.id);
+      const author = includedTweet?.author_id ? usersById.get(includedTweet.author_id) : undefined;
+      return {
+        id: ref.id,
+        text: includedTweet?.text,
+        author_id: includedTweet?.author_id,
+        author_username: author?.username,
+        author_name: author?.name,
+      };
+    });
+
+  return {
+    tweet_id: tweet.id,
+    classification: {
+      has_uploaded_media: hasUploadedMedia,
+      media_types: mediaTypes,
+      has_quote: hasQuote,
+      post_pattern: postPattern,
+    },
+    media,
+    links: entities?.urls ?? [],
+    quoted_tweets: quotedTweets,
+  };
+}
+
+function formatTweetInspectionHuman(inspection: TweetInspection): void {
+  console.log(`Post pattern: ${inspection.classification.post_pattern}`);
+  console.log(`Uploaded media: ${inspection.classification.has_uploaded_media ? "yes" : "no"}`);
+  console.log(`Media types: ${inspection.classification.media_types.length ? inspection.classification.media_types.join(",") : "none"}`);
+  console.log(`Quoted tweet: ${inspection.classification.has_quote ? "yes" : "no"}`);
+  for (const item of inspection.media) {
+    const dimensions = item.width && item.height ? `${item.width}x${item.height}` : "unknown-size";
+    const duration = typeof item.duration_ms === "number" ? `, ${(item.duration_ms / 1000).toFixed(1)}s` : "";
+    console.log(`- media ${item.media_key}: ${item.type} (${dimensions}${duration})`);
+  }
+  for (const quoted of inspection.quoted_tweets) {
+    const author = quoted.author_username ? `@${quoted.author_username}` : "unknown-author";
+    console.log(`- quoted ${author}/status/${quoted.id}`);
+  }
 }
 
 function isNumericId(value: string): boolean {
@@ -695,6 +834,8 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
     .option("--expansions <csv>", "Expansions (--raw only)", parseCsv)
     .option("--user-fields <csv>", "User fields for expansions (--raw only)", parseCsv)
     .option("--media-fields <csv>", "Media fields (--raw only)", parseCsv)
+    .addOption(new Option("--preset <name>", "Field preset for --raw: media").choices(["media"]))
+    .option("--inspect", "Summarize uploaded media, links, and quote structure using the media preset")
     .option("--auth <mode>", "Auth mode for --raw / --image: bearer | oauth1", "bearer")
     .action(
       async (
@@ -707,15 +848,18 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
           expansions?: string[];
           userFields?: string[];
           mediaFields?: string[];
+          preset?: string;
+          inspect?: boolean;
           auth?: string;
         },
       ) => {
         try {
           const mode = getOutputMode();
-          if (opts.raw) {
+          if (opts.raw || opts.inspect) {
             // When --metrics is specified, default to oauth1 and add metric fields
             const auth = (opts.metrics ? "oauth1" : (opts.auth ?? "bearer")) as "bearer" | "oauth1";
             const tc = getTwitterClient();
+            const useMediaPreset = opts.preset === "media" || opts.inspect;
 
             let tweetFields = opts.tweetFields;
             if (opts.metrics) {
@@ -723,14 +867,26 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
               const extras = ["non_public_metrics", "organic_metrics"];
               tweetFields = [...new Set([...base, ...extras])];
             }
+            if (useMediaPreset) {
+              tweetFields = opts.tweetFields ?? tweetFields ?? TWEET_MEDIA_PRESET_TWEET_FIELDS;
+            }
 
             const result = await tc.getTweetById(url, {
               tweetFields,
-              expansions: opts.expansions,
-              userFields: opts.userFields,
-              mediaFields: opts.mediaFields,
+              expansions: useMediaPreset && !opts.expansions ? TWEET_MEDIA_PRESET_EXPANSIONS : opts.expansions,
+              userFields: useMediaPreset && !opts.userFields ? TWEET_MEDIA_PRESET_USER_FIELDS : opts.userFields,
+              mediaFields: useMediaPreset && !opts.mediaFields ? TWEET_MEDIA_PRESET_MEDIA_FIELDS : opts.mediaFields,
               auth,
             });
+            if (opts.inspect) {
+              const inspection = buildTweetInspection(result);
+              if (mode === "json") {
+                jsonOutput(inspection);
+              } else {
+                formatTweetInspectionHuman(inspection);
+              }
+              return;
+            }
             if (mode === "json") {
               jsonOutput(result);
             } else {
