@@ -273,10 +273,22 @@ xai tweet "https://x.com/elonmusk/status/123456789"
 # Direct X API v2 call (structured JSON)
 xai tweet "https://x.com/elonmusk/status/123456789" --raw --json
 
+# Media/quote investigation preset
+xai tweet "https://x.com/elonmusk/status/123456789" --raw --preset media --json
+
+# Human-readable structure summary for uploaded media and quoted tweets
+xai tweet "https://x.com/elonmusk/status/123456789" --inspect
+xai --json tweet "https://x.com/elonmusk/status/123456789" --inspect
+
 # Non-public metrics (own tweets only, requires OAuth1, requires Basic+)
 # Retrieves non-public metrics such as impression counts
 xai tweet 1234567890123456789 --raw --metrics
 ```
+
+`--preset media` expands the X API lookup fields needed for attached media, media
+variants, entities, and quoted tweets. `--inspect` uses the same preset and
+returns a normalized summary such as `uploaded_video_with_quoted_tweet` without
+downloading media files.
 
 ### Image OCR / Vision Analysis (--image)
 
