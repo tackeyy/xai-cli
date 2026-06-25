@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { Command, InvalidArgumentError, Option } from "commander";
-import { extname } from "node:path";
 import { XaiClient } from "../lib/client.js";
+import { getPostMediaMimeType, getSupportedPostMediaExtensions } from "../lib/media-types.js";
 import { TwitterClient, TweetTooLongError } from "../lib/twitter-client.js";
 import type {
   DmCheckResult,
@@ -222,23 +222,6 @@ function formatProfileHuman(
   if (profile.created_at) console.log(`created_at=${profile.created_at}`);
   console.log(`--- bio (${bioCharCount}字 / ${bioLineCount}行) ---`);
   console.log(profile.description ? profile.description : "(bio未設定)");
-}
-
-function getMediaTypeForPath(filePath: string): string {
-  const ext = extname(filePath).toLowerCase().replace(".", "");
-  switch (ext) {
-    case "jpg":
-    case "jpeg":
-      return "image/jpeg";
-    case "png":
-      return "image/png";
-    case "gif":
-      return "image/gif";
-    case "mp4":
-      return "video/mp4";
-    default:
-      return "application/octet-stream";
-  }
 }
 
 function buildPostInput(opts: {
@@ -1138,7 +1121,7 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
       parsePositiveInteger,
     )
     .option("--no-length-check", "Skip local tweet-length validation")
-    .option("--media <path...>", "Media file path(s) to attach (1-4 files)")
+    .option("--media <path...>", `Media file path(s) to attach (${getSupportedPostMediaExtensions().join(", ")})`)
     .option("--alt-text <text...>", "Alt text for each media file (same order as --media)")
     .option("--poll <options...>", "Poll options (2-4 choices, e.g. --poll Yes No Maybe)")
     .option("--poll-duration <minutes>", "Poll duration in minutes (default: 1440)", parsePositiveInteger)
@@ -1171,7 +1154,7 @@ export function createProgram(injectedClient?: XaiClient, injectedTwitterClient?
 
             const mediaFiles = opts.media?.map((p, i) => ({
               path: p,
-              media_type: getMediaTypeForPath(p),
+              media_type: getPostMediaMimeType(p),
               ...(opts.altText?.[i] !== undefined ? { alt_text: opts.altText[i] } : {}),
             }));
 

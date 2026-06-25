@@ -2597,6 +2597,29 @@ describe("TwitterClient.uploadMedia", () => {
     }
   });
 
+  it("detects media_type and media_category from extension: webp → tweet_image", async () => {
+    const { writeFileSync, unlinkSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const tmp = join(tmpdir(), "test-upload.webp");
+    writeFileSync(tmp, Buffer.from([0x52, 0x49, 0x46, 0x46]));
+
+    fetchSpy
+      .mockResolvedValueOnce(mockInitResponse())
+      .mockResolvedValueOnce(new Response(JSON.stringify({}), { status: 200 }))
+      .mockResolvedValueOnce(mockFinalizeResponse());
+
+    try {
+      const tc = makeClient();
+      await tc.uploadMedia(tmp);
+      const initBody = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
+      expect(initBody.media_type).toBe("image/webp");
+      expect(initBody.media_category).toBe("tweet_image");
+    } finally {
+      unlinkSync(tmp);
+    }
+  });
+
   it("detects media_type and media_category from extension: mp4 → tweet_video", async () => {
     const { writeFileSync, unlinkSync } = await import("node:fs");
     const { tmpdir } = await import("node:os");
@@ -2614,6 +2637,29 @@ describe("TwitterClient.uploadMedia", () => {
       await tc.uploadMedia(tmp);
       const initBody = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
       expect(initBody.media_type).toBe("video/mp4");
+      expect(initBody.media_category).toBe("tweet_video");
+    } finally {
+      unlinkSync(tmp);
+    }
+  });
+
+  it("detects media_type and media_category from extension: mov → tweet_video", async () => {
+    const { writeFileSync, unlinkSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const tmp = join(tmpdir(), "test-upload.mov");
+    writeFileSync(tmp, Buffer.from([0x00, 0x00, 0x00, 0x14, 0x66, 0x74, 0x79, 0x70]));
+
+    fetchSpy
+      .mockResolvedValueOnce(mockInitResponse())
+      .mockResolvedValueOnce(new Response(JSON.stringify({}), { status: 200 }))
+      .mockResolvedValueOnce(mockFinalizeResponse());
+
+    try {
+      const tc = makeClient();
+      await tc.uploadMedia(tmp);
+      const initBody = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
+      expect(initBody.media_type).toBe("video/quicktime");
       expect(initBody.media_category).toBe("tweet_video");
     } finally {
       unlinkSync(tmp);
