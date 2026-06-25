@@ -8,6 +8,10 @@ export interface PostMediaTypeInfo {
 const POST_MEDIA_TYPES: Record<string, PostMediaTypeInfo> = {
   jpg: { mediaType: "image/jpeg", mediaCategory: "tweet_image" },
   jpeg: { mediaType: "image/jpeg", mediaCategory: "tweet_image" },
+  jpe: { mediaType: "image/jpeg", mediaCategory: "tweet_image" },
+  jfif: { mediaType: "image/jpeg", mediaCategory: "tweet_image" },
+  jif: { mediaType: "image/jpeg", mediaCategory: "tweet_image" },
+  jfi: { mediaType: "image/jpeg", mediaCategory: "tweet_image" },
   png: { mediaType: "image/png", mediaCategory: "tweet_image" },
   webp: { mediaType: "image/webp", mediaCategory: "tweet_image" },
   gif: { mediaType: "image/gif", mediaCategory: "tweet_gif" },
