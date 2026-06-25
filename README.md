@@ -358,7 +358,7 @@ xai --json post --text "hi"
 # Attach a single image
 xai post --text "Screenshot" --media /path/to/image.png
 
-# Attach multiple files (up to 4)
+# Attach multiple images
 xai post --text "Photo collection" --media img1.jpg img2.jpg img3.jpg
 
 # With alt text
@@ -367,6 +367,10 @@ xai post --text "Chart" --media chart.png --alt-text "AI market growth chart"
 # Dry-run
 xai post --dry-run --text "test" --media /path/to/image.png
 ```
+
+Supported media extensions for `post --media` are `jpg`, `jpeg`, `png`, `webp`,
+`gif`, `mp4`, and `mov`. They map to X media categories `tweet_image`,
+`tweet_gif`, and `tweet_video`.
 
 ### Post Tweet with Poll
 

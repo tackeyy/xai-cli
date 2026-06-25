@@ -1780,6 +1780,31 @@ describe("CLI commands", () => {
         unlinkSync(tmp);
       }
     });
+
+    it("--media --dry-run --json recognizes webp and mov media types", async () => {
+      const { writeFileSync, unlinkSync } = await import("node:fs");
+      const { tmpdir } = await import("node:os");
+      const { join } = await import("node:path");
+      const webp = join(tmpdir(), "test-dry-media-json.webp");
+      const mov = join(tmpdir(), "test-dry-media-json.mov");
+      writeFileSync(webp, Buffer.from([0x52, 0x49, 0x46, 0x46]));
+      writeFileSync(mov, Buffer.from([0x00, 0x00, 0x00, 0x14]));
+
+      const tc = createMockTwitterClient();
+      (tc as any).uploadMedia = vi.fn();
+
+      try {
+        await run(["--json", "post", "--dry-run", "--text", "hi", "--media", webp, mov], undefined, tc);
+        const parsed = JSON.parse(logSpy.mock.calls[0][0]);
+        expect(parsed.media_files).toEqual([
+          expect.objectContaining({ path: webp, media_type: "image/webp" }),
+          expect.objectContaining({ path: mov, media_type: "video/quicktime" }),
+        ]);
+      } finally {
+        unlinkSync(webp);
+        unlinkSync(mov);
+      }
+    });
   });
 
   describe("following", () => {

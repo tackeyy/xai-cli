@@ -1,6 +1,6 @@
 import { createHmac } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { extname } from "node:path";
+import { getPostMediaTypeInfo, type PostMediaTypeInfo } from "./media-types.js";
 import { computeTweetLength, TWEET_MAX_LENGTH } from "./tweet-length.js";
 import type {
   DmAvailability,
@@ -772,21 +772,8 @@ export class TwitterClient {
    * Determine MIME type and media_category from file extension.
    * Returns undefined for unknown extensions (caller should decide how to handle).
    */
-  private getMediaTypeInfo(filePath: string): { mediaType: string; mediaCategory: string } | undefined {
-    const ext = extname(filePath).toLowerCase().replace(".", "");
-    switch (ext) {
-      case "jpg":
-      case "jpeg":
-        return { mediaType: "image/jpeg", mediaCategory: "tweet_image" };
-      case "png":
-        return { mediaType: "image/png", mediaCategory: "tweet_image" };
-      case "gif":
-        return { mediaType: "image/gif", mediaCategory: "tweet_gif" };
-      case "mp4":
-        return { mediaType: "video/mp4", mediaCategory: "tweet_video" };
-      default:
-        return undefined;
-    }
+  private getMediaTypeInfo(filePath: string): PostMediaTypeInfo | undefined {
+    return getPostMediaTypeInfo(filePath);
   }
 
   /**
