@@ -368,9 +368,9 @@ xai post --text "Chart" --media chart.png --alt-text "AI market growth chart"
 xai post --dry-run --text "test" --media /path/to/image.png
 ```
 
-Supported media extensions for `post --media` are `jpg`, `jpeg`, `png`, `webp`,
-`gif`, `mp4`, and `mov`. They map to X media categories `tweet_image`,
-`tweet_gif`, and `tweet_video`.
+Supported media extensions for `post --media` are `jpg`, `jpeg`, `jpe`, `jfif`,
+`jif`, `jfi`, `png`, `webp`, `gif`, `mp4`, and `mov`. They map to X media
+categories `tweet_image`, `tweet_gif`, and `tweet_video`.
 
 ### Post Tweet with Poll
 

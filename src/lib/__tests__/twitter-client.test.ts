@@ -2620,6 +2620,29 @@ describe("TwitterClient.uploadMedia", () => {
     }
   });
 
+  it("detects JPEG alias extensions as tweet_image", async () => {
+    const { writeFileSync, unlinkSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const tmp = join(tmpdir(), "test-upload.jfif");
+    writeFileSync(tmp, Buffer.from([0xff, 0xd8, 0xff, 0xe0]));
+
+    fetchSpy
+      .mockResolvedValueOnce(mockInitResponse())
+      .mockResolvedValueOnce(new Response(JSON.stringify({}), { status: 200 }))
+      .mockResolvedValueOnce(mockFinalizeResponse());
+
+    try {
+      const tc = makeClient();
+      await tc.uploadMedia(tmp);
+      const initBody = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
+      expect(initBody.media_type).toBe("image/jpeg");
+      expect(initBody.media_category).toBe("tweet_image");
+    } finally {
+      unlinkSync(tmp);
+    }
+  });
+
   it("detects media_type and media_category from extension: mp4 → tweet_video", async () => {
     const { writeFileSync, unlinkSync } = await import("node:fs");
     const { tmpdir } = await import("node:os");

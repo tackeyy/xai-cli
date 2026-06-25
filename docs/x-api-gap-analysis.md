@@ -129,7 +129,7 @@ xai-cli が対象とする X API v2 エンドポイントの**実装状況**（P
 
 | # | エンドポイント / 機能 | ステータス | コマンド | 備考 |
 |---|---|---|---|---|
-| Md1 | POST /2/media/upload/{initialize,{id}/append,{id}/finalize} | ✅ 実装済み | `post --media <path...>` 経由 | v2 **dedicated endpoints** で実装（command 方式は deprecated のため移行済み）。対応拡張子は `jpg`/`jpeg`/`png`/`webp`/`gif`/`mp4`/`mov`。STATUS 相当のポーリングは動画/GIF のみ。alt-text は `POST /2/media/metadata` |
+| Md1 | POST /2/media/upload/{initialize,{id}/append,{id}/finalize} | ✅ 実装済み | `post --media <path...>` 経由 | v2 **dedicated endpoints** で実装（command 方式は deprecated のため移行済み）。対応拡張子は `jpg`/`jpeg`/`jpe`/`jfif`/`jif`/`jfi`/`png`/`webp`/`gif`/`mp4`/`mov`。STATUS 相当のポーリングは動画/GIF のみ。alt-text は `POST /2/media/metadata` |
 
 ---
 
